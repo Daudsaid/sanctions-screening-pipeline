@@ -1,0 +1,10 @@
+data/raw/*
+!data/raw/.gitkeep
+.env
+__pycache__/
+*.pyc
+.dbt/
+dbt_packages/
+target/
+logs/
+.venv/

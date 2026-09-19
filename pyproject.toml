@@ -1,0 +1,21 @@
+[project]
+name = "sanctions-screening-pipeline"
+version = "0.1.0"
+description = "Add your description here"
+requires-python = ">=3.12"
+dependencies = [
+    "httpx>=0.28.1",
+    "matplotlib>=3.11.2",
+    "polars>=1.44.2",
+    "psycopg[binary]>=3.3.6",
+    "pydantic>=2.13.5",
+    "rapidfuzz>=3.14.6",
+    "scikit-learn>=1.9.1",
+]
+
+[dependency-groups]
+dev = [
+    "dbt-postgres>=1.11.0",
+    "pytest>=9.1.1",
+    "ruff>=0.16.8",
+]
