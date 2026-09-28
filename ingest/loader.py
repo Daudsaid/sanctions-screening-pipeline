@@ -21,9 +21,14 @@ def get_connection() -> psycopg.Connection:
     )
 
 
-def content_hash(payload: dict) -> str:
-    """Stable hash of a raw record, stored as source_version for audit."""
-    blob = json.dumps(payload, sort_keys=True).encode()
+def content_hash(payload: dict, ignore: frozenset[str] = frozenset()) -> str:
+    """Stable hash of a raw record, stored as source_version.
+
+    ignore lists volatile fields (e.g. an export timestamp) that change on
+    every fetch and would make unchanged records look new.
+    """
+    stable = {k: v for k, v in payload.items() if k not in ignore}
+    blob = json.dumps(stable, sort_keys=True).encode()
     return hashlib.sha256(blob).hexdigest()
 
 
@@ -33,16 +38,16 @@ def load_raw(
     key_column: str,
     rows: list[tuple[str, dict]],
     extra: dict[str, str] | None = None,
+    hash_ignore: frozenset[str] = frozenset(),
 ) -> int:
-    """COPY (key, payload) pairs into a raw_* table.
-
-    extra holds constant columns for the whole batch, e.g. {"dataset": "us_ofac_sdn"}.
-    """
+    """COPY (key, payload) pairs into a raw_* table."""
     extra = extra or {}
     columns = [key_column, *extra.keys(), "raw", "source_version"]
     with conn.cursor() as cur:
         with cur.copy(f"COPY {table} ({', '.join(columns)}) FROM STDIN") as copy:
             for key, payload in rows:
-                copy.write_row([key, *extra.values(), json.dumps(payload), content_hash(payload)])
+                copy.write_row(
+                    [key, *extra.values(), json.dumps(payload), content_hash(payload, hash_ignore)]
+                )
     conn.commit()
     return len(rows)

@@ -15,6 +15,7 @@ from ingest.loader import content_hash, get_connection, load_raw
 DATASET = "us_ofac_sdn"
 URL = f"https://data.opensanctions.org/datasets/latest/{DATASET}/targets.simple.csv"
 CACHE = Path("data/raw") / f"{DATASET}.targets.simple.csv"
+VOLATILE = frozenset({"last_seen"})
 
 
 def fetch() -> Path:
@@ -45,9 +46,18 @@ def run() -> None:
         )
         seen = {r[0] for r in cur.fetchall()}
 
-    new_rows = [(key, payload) for key, payload in rows if content_hash(payload) not in seen]
+    new_rows = [
+        (key, payload)
+        for key, payload in rows
+        if content_hash(payload, VOLATILE) not in seen
+    ]
     loaded = load_raw(
-        conn, "raw_sanctions_snapshot", "target_id", new_rows, extra={"dataset": DATASET}
+        conn,
+        "raw_sanctions_snapshot",
+        "target_id",
+        new_rows,
+        extra={"dataset": DATASET},
+        hash_ignore=VOLATILE,
     )
     print(f"loaded {loaded} new rows ({len(rows) - loaded} already present)")
 
