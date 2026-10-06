@@ -24,3 +24,12 @@ The hash now excludes last_seen. The column is still stored in the raw JSON;
 it just doesn't decide whether a record counts as changed. A record only
 lands as a new version when its content changes, which is what the audit
 trail needs. Verified: a second run against an unchanged export loads 0 rows.
+
+## Project lives outside iCloud-synced Desktop
+
+Commands repeatedly stalled for minutes at near-zero CPU: the bulk dry run,
+the officers fetch, dbt debug. A traceback showed Python blocked reading a
+package file during import. ~/Desktop was synced by iCloud ("Desktop &
+Documents"), so every read of the .venv's thousands of files could wait on
+iCloud. Moving the project to ~/dev fixed it: dbt debug went from over
+7 minutes to 4.5 seconds.
