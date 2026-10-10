@@ -8,3 +8,5 @@ dbt_packages/
 target/
 logs/
 .venv/
+*.log
+.user.yml

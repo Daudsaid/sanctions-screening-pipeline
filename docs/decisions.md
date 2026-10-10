@@ -33,3 +33,68 @@ package file during import. ~/Desktop was synced by iCloud ("Desktop &
 Documents"), so every read of the .venv's thousands of files could wait on
 iCloud. Moving the project to ~/dev fixed it: dbt debug went from over
 7 minutes to 4.5 seconds.
+
+## Staging decisions from profiling (explore/01_raw_profile.ipynb)
+
+- Sanctions targets: 7,509 persons, 9,893 organisations (Organization,
+  Company, LegalEntity), 2,944 out of scope (Vessel, CryptoWallet, Airplane,
+  Security). Out-of-scope targets stay in staging but are excluded from
+  matching. Persons only match persons; organisations match companies and
+  corporate officers.
+- OFAC person birth dates: 81.7% full date, 9.1% multiple, 7.9% year only,
+  1.3% missing. Companies House gives year and month only, so dates are
+  compared at YYYY-MM. A year mismatch counts as evidence against a match.
+  Multiple dates are scored on the best-agreeing one.
+- Aliases: 5,494 of 30,547 (18%) contain no Latin letters, but every
+  screenable target has at least one Latin name. Non-Latin script costs name
+  variants, never whole targets.
+- Officers: 26,192 persons, all in "SURNAME, Forenames" form (enforced by a
+  test). 1,906 corporate officers are matched on the organisation side.
+  3,103 secretaries have no date of birth and can only match on name.
+- 21,613 distinct officer IDs across 28,098 appointments, so screening is per
+  person. This is an upper bound: Companies House does not always merge one
+  person's records.
+- 56% of appointments have ended. v1 alerts on current officers only; resigned
+  officers stay in staging. Known gap: an officer who resigned after
+  designation. Planned as a v2 rule.
+- Company suffixes stripped: LIMITED, LTD, LTD., PLC, CIC, COMMUNITY INTEREST
+  COMPANY. Private unlimited companies and exempt guarantee companies have no
+  suffix by law. Words like COMPANY (as in "& COMPANY"), INVESTMENTS and
+  HOLDINGS are part of the name and are not stripped.
+- The slice contains no LLPs, which appear not to file SIC codes, so a
+  SIC-based slice cannot include them. A coverage gap for fund management.
+- Incorporation dates are 100% dd/mm/yyyy and are parsed with no fallback.
+
+## Data quality findings (explore/02_data_quality.ipynb)
+
+Clean: sanctions names, birth dates (8,337, all well-formed and plausible),
+country codes (all ISO 2-letter), timestamp ordering; company slice integrity
+(all Active, all 66300); officer joins (no orphans, no duplicate appointments).
+
+Handled:
+- 4 aliases repeat the primary name and 6 repeat within a target. Names are
+  deduplicated per target in staging.
+- appointed_on is null for exactly the 824 pre-1992 appointments. Companies
+  House does not record those dates, so the column is nullable by design.
+- 2 officers resigned before their appointment date, and 1 officer ID has two
+  birth dates. Source errors, kept and noted.
+- Several sanctioned parties share a name (two separate persons named Alireza
+  Derakhshan). Alerts reference target_id, never a name alone.
+- No OC (LLP) company numbers in the slice, consistent with the LLP gap.
+- Registered-office country mixes UNITED KINGDOM, constituent countries and
+  547 blanks. Not used for matching.
+- 38 officer IDs carry more than one name. Every name is matched, like aliases.
+- 645 name+DOB combinations span 1,437 officer IDs, so Companies House holds
+  duplicate records for some people. v1 keys on officer_id and accepts that a
+  person may alert twice: merging on name+DOB is entity resolution in its own
+  right, and a wrong merge is worse than a duplicate alert.
+
+Officer name format is "SURNAME, Forenames, Title". The third field holds
+courtesy titles and, in places, job titles ("Director", "Ceo"). Everything
+after the second comma goes to name_title and is excluded from matching.
+Bracketed text (nicknames, former names) goes to name_note. A leading title in
+the forenames (5 cases, all LORD) is stripped.
+
+Nationality is free text with 304 spellings (British/English/United Kingdom,
+American/Usa/United States, combined "British,American"). Mapped to ISO codes
+via a seed file. Unmapped and missing values are neutral in scoring.
