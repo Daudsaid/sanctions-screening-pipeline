@@ -37,3 +37,10 @@ models:
       +materialized: table
     marts:
       +materialized: table
+
+seeds:
+  sanctions_screening_dbt:
+    nationality_token_iso:
+      +column_types:
+        token: text
+        iso2: text

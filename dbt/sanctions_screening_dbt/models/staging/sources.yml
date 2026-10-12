@@ -1,0 +1,9 @@
+version: 2
+
+sources:
+  - name: raw
+    schema: public
+    tables:
+      - name: raw_sanctions_snapshot
+      - name: raw_ch_company
+      - name: raw_ch_officer

@@ -1,0 +1,71 @@
+version: 2
+
+models:
+  - name: stg_sanctions_target
+    columns:
+      - name: target_id
+        tests: [unique, not_null]
+      - name: primary_name
+        tests: [not_null]
+      - name: entity_group
+        tests:
+          - accepted_values:
+              values: ['person', 'organization', 'out_of_scope']
+
+  - name: stg_sanctions_name
+    columns:
+      - name: target_id
+        tests:
+          - not_null
+          - relationships:
+              to: ref('stg_sanctions_target')
+              field: target_id
+      - name: name
+        tests: [not_null]
+      - name: name_type
+        tests:
+          - accepted_values:
+              values: ['primary', 'alias']
+
+  - name: stg_ch_company
+    columns:
+      - name: company_number
+        tests: [unique, not_null]
+      - name: company_name
+        tests: [not_null]
+      - name: incorporated_on
+        tests: [not_null]
+
+  - name: stg_ch_company_name
+    columns:
+      - name: company_number
+        tests:
+          - not_null
+          - relationships:
+              to: ref('stg_ch_company')
+              field: company_number
+      - name: name_type
+        tests:
+          - accepted_values:
+              values: ['current', 'previous']
+
+  - name: stg_ch_officer
+    columns:
+      - name: appointment_id
+        tests: [unique, not_null]
+      - name: officer_id
+        tests: [not_null]
+      - name: company_number
+        tests:
+          - relationships:
+              to: ref('stg_ch_company')
+              field: company_number
+      - name: officer_kind
+        tests:
+          - accepted_values:
+              values: ['person', 'organization']
+      - name: surname
+        tests:
+          - not_null:
+              config:
+                where: "officer_kind = 'person'"
