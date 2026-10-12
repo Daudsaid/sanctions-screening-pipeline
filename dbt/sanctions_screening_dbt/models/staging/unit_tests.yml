@@ -1,0 +1,60 @@
+version: 2
+
+# Unit tests run the model SQL against fixed inputs, so they need a database
+# but no real data. They guard the parsing rules in docs/decisions.md.
+
+unit_tests:
+  - name: officer_name_parsing
+    description: >
+      "SURNAME, Forenames, Title": the third field goes to name_title,
+      bracketed text to name_note, and a leading title is stripped only when
+      it is a whole word (ANDREW and DREW keep their DR).
+    model: stg_ch_officer
+    given:
+      - input: source('raw', 'raw_ch_officer')
+        format: sql
+        rows: |
+          select id, company_number, 'v1'::text as source_version,
+                 '2026-10-01'::timestamptz as ingested_at, raw::jsonb as raw
+          from (values
+            (1, '00000001', '{"name": "SMITH, John Andrew", "officer_role": "director",
+              "links": {"self": "/company/00000001/appointments/A1", "officer": {"appointments": "/officers/O1/appointments"}}}'),
+            (2, '00000001', '{"name": "DREW, Andrew", "officer_role": "director",
+              "links": {"self": "/company/00000001/appointments/A2", "officer": {"appointments": "/officers/O2/appointments"}}}'),
+            (3, '00000001', '{"name": "BLOGGS, Lord Frederick, Director", "officer_role": "director",
+              "links": {"self": "/company/00000001/appointments/A3", "officer": {"appointments": "/officers/O3/appointments"}}}'),
+            (4, '00000001', '{"name": "DOE, Dr. Jane", "officer_role": "secretary",
+              "links": {"self": "/company/00000001/appointments/A4", "officer": {"appointments": "/officers/O4/appointments"}}}'),
+            (5, '00000001', '{"name": "JONES (NEE BROWN), Mary (Molly)", "officer_role": "director",
+              "resigned_on": "2024-03-31",
+              "links": {"self": "/company/00000001/appointments/A5", "officer": {"appointments": "/officers/O5/appointments"}}}'),
+            (6, '00000001', '{"name": "ACME HOLDINGS LIMITED", "officer_role": "corporate-director",
+              "links": {"self": "/company/00000001/appointments/A6", "officer": {"appointments": "/officers/O6/appointments"}}}')
+          ) as v(id, company_number, raw)
+    expect:
+      rows:
+        - {appointment_id: A1, officer_id: O1, officer_kind: person, surname: SMITH, forenames: John Andrew, name_title: null, name_note: null, full_name: John Andrew SMITH, is_current: true}
+        - {appointment_id: A2, officer_id: O2, officer_kind: person, surname: DREW, forenames: Andrew, name_title: null, name_note: null, full_name: Andrew DREW, is_current: true}
+        - {appointment_id: A3, officer_id: O3, officer_kind: person, surname: BLOGGS, forenames: Frederick, name_title: Director, name_note: null, full_name: Frederick BLOGGS, is_current: true}
+        - {appointment_id: A4, officer_id: O4, officer_kind: person, surname: DOE, forenames: Jane, name_title: null, name_note: null, full_name: Jane DOE, is_current: true}
+        - {appointment_id: A5, officer_id: O5, officer_kind: person, surname: JONES, forenames: Mary, name_title: null, name_note: NEE BROWN, full_name: Mary JONES, is_current: false}
+        - {appointment_id: A6, officer_id: O6, officer_kind: organization, surname: null, forenames: null, name_title: null, name_note: null, full_name: ACME HOLDINGS LIMITED, is_current: true}
+
+  - name: officer_latest_version_wins
+    description: When an appointment lands twice, staging keeps the most recent version.
+    model: stg_ch_officer
+    given:
+      - input: source('raw', 'raw_ch_officer')
+        format: sql
+        rows: |
+          select id, '00000001'::text as company_number, source_version,
+                 ingested_at::timestamptz, raw::jsonb as raw
+          from (values
+            (1, 'v1', '2026-10-01', '{"name": "SMITH, John", "officer_role": "director",
+              "links": {"self": "/company/00000001/appointments/A1", "officer": {"appointments": "/officers/O1/appointments"}}}'),
+            (2, 'v2', '2026-10-05', '{"name": "SMITH, John", "officer_role": "director", "resigned_on": "2026-10-04",
+              "links": {"self": "/company/00000001/appointments/A1", "officer": {"appointments": "/officers/O1/appointments"}}}')
+          ) as v(id, source_version, ingested_at, raw)
+    expect:
+      rows:
+        - {appointment_id: A1, source_version: v2, is_current: false}

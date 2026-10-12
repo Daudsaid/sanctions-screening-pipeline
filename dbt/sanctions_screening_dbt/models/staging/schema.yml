@@ -10,7 +10,8 @@ models:
       - name: entity_group
         tests:
           - accepted_values:
-              values: ['person', 'organization', 'out_of_scope']
+              arguments:
+                values: ['person', 'organization', 'out_of_scope']
 
   - name: stg_sanctions_name
     columns:
@@ -18,14 +19,16 @@ models:
         tests:
           - not_null
           - relationships:
-              to: ref('stg_sanctions_target')
-              field: target_id
+              arguments:
+                to: ref('stg_sanctions_target')
+                field: target_id
       - name: name
         tests: [not_null]
       - name: name_type
         tests:
           - accepted_values:
-              values: ['primary', 'alias']
+              arguments:
+                values: ['primary', 'alias']
 
   - name: stg_ch_company
     columns:
@@ -42,12 +45,14 @@ models:
         tests:
           - not_null
           - relationships:
-              to: ref('stg_ch_company')
-              field: company_number
+              arguments:
+                to: ref('stg_ch_company')
+                field: company_number
       - name: name_type
         tests:
           - accepted_values:
-              values: ['current', 'previous']
+              arguments:
+                values: ['current', 'previous']
 
   - name: stg_ch_officer
     columns:
@@ -58,12 +63,14 @@ models:
       - name: company_number
         tests:
           - relationships:
-              to: ref('stg_ch_company')
-              field: company_number
+              arguments:
+                to: ref('stg_ch_company')
+                field: company_number
       - name: officer_kind
         tests:
           - accepted_values:
-              values: ['person', 'organization']
+              arguments:
+                values: ['person', 'organization']
       - name: surname
         tests:
           - not_null:

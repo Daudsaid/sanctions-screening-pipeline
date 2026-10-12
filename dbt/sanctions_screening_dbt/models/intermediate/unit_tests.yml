@@ -1,0 +1,54 @@
+version: 2
+
+unit_tests:
+  - name: name_normalisation_and_core
+    description: >
+      normalise_name and legal-form stripping, applied the same way to
+      subjects and targets. Cases: dots and apostrophes dropped without a
+      space (A.B.C., O'NEILL), prefix and suffix forms stripped, accents and
+      German sharp s transliterated (unaccent runs before upper, so STRASSE
+      survives), non-Latin names dropped, mostly non-Latin names with stray
+      Latin letters dropped (OOO ТРАНС ЛОГИСТИК would otherwise become OOO),
+      resigned officers excluded, two names with the same core deduplicated.
+      "& CO" is stripped but "& COMPANY" is not: this pins the current,
+      documented behaviour so a change to it is deliberate.
+    model: int_name_norm
+    given:
+      - input: ref('stg_ch_officer')
+        rows:
+          - {officer_id: O1, officer_kind: person, is_current: true, full_name: John SMITH, name_raw: "SMITH, John"}
+          - {officer_id: O2, officer_kind: person, is_current: false, full_name: Ex OFFICER, name_raw: "OFFICER, Ex"}
+          - {officer_id: O3, officer_kind: organization, is_current: true, full_name: Nominee Ltd, name_raw: Nominee Ltd}
+      - input: ref('stg_ch_company_name')
+        rows:
+          - {company_number: C1, name: Acme Trading Ltd.}
+          - {company_number: C1, name: ACME TRADING LIMITED}
+          - {company_number: C2, name: The Smith & Co. Limited}
+          - {company_number: C3, name: Smith & Company Limited}
+          - {company_number: C4, name: Zeta Alpha Ltd}
+          - {company_number: C5, name: "A.B.C. O'Neill Services Ltd"}
+      - input: ref('stg_sanctions_name')
+        rows:
+          - {target_id: T1, entity_group: person, name: José Straße}
+          - {target_id: T2, entity_group: person, name: Владимир Иванов}
+          - {target_id: T3, entity_group: organization, name: OOO Romashka}
+          - {target_id: T4, entity_group: out_of_scope, name: DENA}
+          - {target_id: T5, entity_group: organization, name: OOO ТРАНС ЛОГИСТИК}
+      - input: ref('legal_forms')
+        rows:
+          - {phrase: THE, position: prefix}
+          - {phrase: OOO, position: both}
+          - {phrase: LIMITED, position: suffix}
+          - {phrase: LTD, position: suffix}
+          - {phrase: CO, position: suffix}
+    expect:
+      rows:
+        - {side: subject, entity_type: officer, entity_id: O1, name_core: JOHN SMITH, name_sorted: JOHN SMITH}
+        - {side: subject, entity_type: officer, entity_id: O3, name_core: NOMINEE, name_sorted: NOMINEE}
+        - {side: subject, entity_type: company, entity_id: C1, name_core: ACME TRADING, name_sorted: ACME TRADING}
+        - {side: subject, entity_type: company, entity_id: C2, name_core: SMITH, name_sorted: SMITH}
+        - {side: subject, entity_type: company, entity_id: C3, name_core: SMITH COMPANY, name_sorted: COMPANY SMITH}
+        - {side: subject, entity_type: company, entity_id: C4, name_core: ZETA ALPHA, name_sorted: ALPHA ZETA}
+        - {side: subject, entity_type: company, entity_id: C5, name_core: ABC ONEILL SERVICES, name_sorted: ABC ONEILL SERVICES}
+        - {side: target, entity_type: sanctions_target, entity_id: T1, name_core: JOSE STRASSE, name_sorted: JOSE STRASSE}
+        - {side: target, entity_type: sanctions_target, entity_id: T3, name_core: ROMASHKA, name_sorted: ROMASHKA}

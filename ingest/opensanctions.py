@@ -47,9 +47,7 @@ def run() -> None:
         seen = {r[0] for r in cur.fetchall()}
 
     new_rows = [
-        (key, payload)
-        for key, payload in rows
-        if content_hash(payload, VOLATILE) not in seen
+        (key, payload) for key, payload in rows if content_hash(payload, VOLATILE) not in seen
     ]
     loaded = load_raw(
         conn,

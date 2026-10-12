@@ -58,6 +58,12 @@ cored as (
     from normed as n
     cross join forms as f
     where n.name_norm <> ''
+      -- NEW: mixed-script names (Cyrillic with stray Latin letters, such as a
+      -- Belarusian i, a Latin C, or OOO before a Cyrillic name) normalise to
+      -- junk like C, I I I or OOO. Keep a name only if at least half of its
+      -- letters are Latin.
+      and length(regexp_replace(unaccent(n.name_raw), '[^A-Za-z]', '', 'g'))
+          >= 0.5 * length(regexp_replace(n.name_raw, '[^[:alpha:]]', '', 'g'))
 ),
 
 deduped as (

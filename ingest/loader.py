@@ -43,11 +43,11 @@ def load_raw(
     """COPY (key, payload) pairs into a raw_* table."""
     extra = extra or {}
     columns = [key_column, *extra.keys(), "raw", "source_version"]
-    with conn.cursor() as cur:
-        with cur.copy(f"COPY {table} ({', '.join(columns)}) FROM STDIN") as copy:
-            for key, payload in rows:
-                copy.write_row(
-                    [key, *extra.values(), json.dumps(payload), content_hash(payload, hash_ignore)]
-                )
+    copy_sql = f"COPY {table} ({', '.join(columns)}) FROM STDIN"
+    with conn.cursor() as cur, cur.copy(copy_sql) as copy:
+        for key, payload in rows:
+            copy.write_row(
+                [key, *extra.values(), json.dumps(payload), content_hash(payload, hash_ignore)]
+            )
     conn.commit()
     return len(rows)

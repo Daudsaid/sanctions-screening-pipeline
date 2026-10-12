@@ -1,16 +1,21 @@
 
-<!-- Sanctions source: OFAC over OFSI for v1 -->
+## Sanctions source: OFAC for v1, UK Sanctions List next
 
-<!-- Attempted to use gb_hmt_sanctions (UK OFSI list) as the primary sanctions
-source. As of 2026-09-19, OpenSanctions' bulk export for this dataset
-returns a header-only CSV (175 bytes) at the origin (confirmed via
-x-goog-stored-content-length on the GCS-backed CDN response, not just a
-stale cache — a fresh cache-busted request returned the same result).
+The first choice was gb_hmt_sanctions (the OFSI Consolidated List). On
+2026-09-19 OpenSanctions' bulk export for it returned a header-only CSV
+(175 bytes) at the origin, confirmed via x-goog-stored-content-length on the
+GCS-backed CDN response; a cache-busted request returned the same.
 
-Used us_ofac_sdn instead for v1: same schema, confirmed 20,349 rows,
-correctly structured. UK OFSI coverage can be added back once the
-upstream export is fixed, or pulled directly from GOV.UK's own OFSI
-consolidated list CSV as an alternative source. -->
+That was not an upstream bug. OFSI closed the Consolidated List on
+28 January 2026, and the UK Sanctions List, published by the FCDO, is now the
+only source of UK designations. The OFSI list is frozen, so pulling GOV.UK's
+OFSI CSV directly is not an alternative either.
+
+v1 uses us_ofac_sdn: same OpenSanctions schema, 20,346 targets. (An earlier
+note said 20,349; the loaded raw table and staging both hold 20,346.)
+Next step: add OpenSanctions' gb_fcdo_sanctions dataset (the UK Sanctions
+List), since a pipeline screening UK companies should screen against UK
+designations, and deduplicate targets designated on both lists.
 
 ## Idempotent raw loads: hashing excludes volatile fields
 
@@ -43,33 +48,44 @@ iCloud. Moving the project to ~/dev fixed it: dbt debug went from over
   corporate officers.
 - OFAC person birth dates: 81.7% full date, 9.1% multiple, 7.9% year only,
   1.3% missing. Companies House gives year and month only, so dates are
-  compared at YYYY-MM. A year mismatch counts as evidence against a match.
-  Multiple dates are scored on the best-agreeing one.
+  compared at YYYY-MM, or at YYYY when the target has a year only. A year
+  mismatch counts as evidence against a match. Multiple dates are scored on
+  the best-agreeing one.
 - Aliases: 5,494 of 30,547 (18%) contain no Latin letters, but every
   screenable target has at least one Latin name. Non-Latin script costs name
   variants, never whole targets.
-- Officers: 26,192 persons, all in "SURNAME, Forenames" form (enforced by a
-  test). 1,906 corporate officers are matched on the organisation side.
+- Officers: 26,192 person appointments, all in "SURNAME, Forenames" form
+  (enforced by a test). 1,906 corporate officer appointments are matched on
+  the organisation side.
   3,103 secretaries have no date of birth and can only match on name.
-- 21,613 distinct officer IDs across 28,098 appointments, so screening is per
-  person. This is an upper bound: Companies House does not always merge one
-  person's records.
+- 21,613 distinct officer IDs across 28,098 appointments (20,772 of them
+  person IDs), so screening is per officer ID. This is an upper bound on
+  people: Companies House does not always merge one person's records. After
+  the current-officers filter below, 9,859 person and 272 corporate officer
+  IDs remain as subjects.
 - 56% of appointments have ended. v1 alerts on current officers only; resigned
   officers stay in staging. Known gap: an officer who resigned after
   designation. Planned as a v2 rule.
 - Company suffixes stripped: LIMITED, LTD, LTD., PLC, CIC, COMMUNITY INTEREST
   COMPANY. Private unlimited companies and exempt guarantee companies have no
   suffix by law. Words like COMPANY (as in "& COMPANY"), INVESTMENTS and
-  HOLDINGS are part of the name and are not stripped.
+  HOLDINGS are part of the name and are not stripped. The abbreviation CO is
+  stripped, so "SMITH & CO LTD" cores to SMITH and "SMITH & COMPANY LTD" to
+  SMITH COMPANY. Accepted for v1; scoring has to tolerate the extra token.
 - The slice contains no LLPs, which appear not to file SIC codes, so a
   SIC-based slice cannot include them. A coverage gap for fund management.
 - Incorporation dates are 100% dd/mm/yyyy and are parsed with no fallback.
 
-## Data quality findings (explore/02_data_quality.ipynb)
+## Data quality findings (explore/02_data_quality_results.txt)
 
 Clean: sanctions names, birth dates (8,337, all well-formed and plausible),
 country codes (all ISO 2-letter), timestamp ordering; company slice integrity
 (all Active, all 66300); officer joins (no orphans, no duplicate appointments).
+
+Minor, handled by normalisation: 5 company names contain double spaces
+(collapsed), 4 companies have no postcode (not used for matching). 2 officer
+names contain a digit; to check whether they are corporate officers filed
+as persons.
 
 Handled:
 - 4 aliases repeat the primary name and 6 repeat within a target. Names are
@@ -93,7 +109,11 @@ Officer name format is "SURNAME, Forenames, Title". The third field holds
 courtesy titles and, in places, job titles ("Director", "Ceo"). Everything
 after the second comma goes to name_title and is excluded from matching.
 Bracketed text (nicknames, former names) goes to name_note. A leading title in
-the forenames (5 cases, all LORD) is stripped.
+the forenames (LORD, SIR, DR, DAME, LADY, REV, PROF, MR, MRS, MS, MISS) is
+stripped as a whole word only. The data-quality check reported 1,005
+"title in forenames", but it matched substrings (DR inside ANDREW); the
+whole-word count is in analyses/leading_titles_in_forenames.sql, and a
+warning test flags any title still left after stripping.
 
 Nationality is free text with 304 spellings (British/English/United Kingdom,
 American/Usa/United States, combined "British,American"). Mapped to ISO codes
