@@ -98,3 +98,25 @@ the forenames (5 cases, all LORD) is stripped.
 Nationality is free text with 304 spellings (British/English/United Kingdom,
 American/Usa/United States, combined "British,American"). Mapped to ISO codes
 via a seed file. Unmapped and missing values are neutral in scoring.
+
+## Name normalisation (int_name_norm)
+
+One macro (normalise_name) is applied identically to subjects and targets:
+uppercase, accents removed, dots and apostrophes dropped (LTD. -> LTD,
+S.A. -> SA), other punctuation to spaces, whitespace collapsed.
+
+Organisation names also get name_core: legal forms stripped from both ends
+using the legal_forms seed, built from the forms actually present on both
+sides (Russian OOO/JSC/AO before or after the name, transliterated forms
+such as AKTSIONERNOE OBSHCHESTVO, GMBH & CO KG, SA DE CV, SIRKETI, DMCC).
+Generic words (COMPANY, GROUP, BANK) are kept and left to frequency
+weighting. If stripping would leave nothing, the full name is kept.
+
+Of 47,641 in-scope sanctions names, 5,413 are non-Latin and drop out (no
+target loses every name), and 2,201 merge into another spelling of the same
+name, leaving 40,027. Subjects: 9,859 person officers, 272 corporate
+officers, 5,406 companies (6,518 names including previous names).
+
+Known limitations: "& Co." is stripped as a legal form even where it is
+part of a trading name. Very short cores (e.g. NKK, BS) give unreliable
+trigram similarity, so scoring requires near-exact agreement for them.

@@ -44,3 +44,7 @@ seeds:
       +column_types:
         token: text
         iso2: text
+    legal_forms:
+      +column_types:
+        phrase: text
+        position: text

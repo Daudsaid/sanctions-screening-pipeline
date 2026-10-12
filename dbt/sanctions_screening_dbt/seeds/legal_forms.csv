@@ -1,0 +1,73 @@
+phrase,position
+THE,prefix
+LIMITED LIABILITY COMPANY,both
+LIMITED LIABILITY PARTNERSHIP,both
+JOINT STOCK COMPANY,both
+CLOSED JOINT STOCK COMPANY,both
+OPEN JOINT STOCK COMPANY,both
+PUBLIC JOINT STOCK COMPANY,both
+AKTSIONERNOE OBSHCHESTVO,both
+OTKRYTOE AKTSIONERNOE OBSHCHESTVO,both
+ZAKRYTOE AKTSIONERNOE OBSHCHESTVO,both
+PUBLICHNOE AKTSIONERNOE OBSHCHESTVO,both
+OBSHCHESTVO S OGRANICHENNOI OTVETSTVENNOSTYU,both
+OBSHCHESTVO S OGRANICHENNOY OTVETSTVENNOSTYU,both
+OOO,both
+AO,both
+JSC,both
+OJSC,both
+CJSC,both
+PJSC,both
+OAO,both
+ZAO,both
+PAO,both
+LLC,both
+TOO,both
+LIMITED,suffix
+LTD,suffix
+PLC,suffix
+LLP,suffix
+LP,suffix
+CIC,suffix
+COMMUNITY INTEREST COMPANY,suffix
+CO,suffix
+INC,suffix
+INCORPORATED,suffix
+CORP,suffix
+CORPORATION,suffix
+GMBH,suffix
+AG,suffix
+KG,suffix
+SA,suffix
+SAS,suffix
+SL,suffix
+SRL,suffix
+SPA,suffix
+SARL,suffix
+SA DE CV,suffix
+S DE RL DE CV,suffix
+CV,suffix
+BV,suffix
+NV,suffix
+OY,suffix
+AB,suffix
+AS,suffix
+PTE,suffix
+PTY,suffix
+PVT,suffix
+SDN BHD,suffix
+BHD,suffix
+FZE,suffix
+FZCO,suffix
+FZC,suffix
+FZ LLC,suffix
+DMCC,suffix
+ANONIM SIRKETI,suffix
+LIMITED SIRKETI,suffix
+SIRKETI,suffix
+DOO,suffix
+EOOD,suffix
+OOD,suffix
+KFT,suffix
+ZRT,suffix
+SP Z OO,suffix

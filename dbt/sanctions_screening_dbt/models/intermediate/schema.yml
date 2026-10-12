@@ -1,0 +1,19 @@
+version: 2
+
+models:
+  - name: int_name_norm
+    columns:
+      - name: name_id
+        tests: [unique, not_null]
+      - name: name_core
+        tests: [not_null]
+      - name: side
+        tests:
+          - accepted_values:
+              arguments:
+                values: ['subject', 'target']
+      - name: entity_kind
+        tests:
+          - accepted_values:
+              arguments:
+                values: ['person', 'organization']
