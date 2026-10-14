@@ -1,0 +1,59 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: sift
+          POSTGRES_PASSWORD: sift
+          POSTGRES_DB: sanctions_screening
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U sift"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      POSTGRES_HOST: localhost
+      POSTGRES_PORT: "5432"
+      POSTGRES_USER: sift
+      POSTGRES_PASSWORD: sift
+      POSTGRES_DB: sanctions_screening
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v6
+
+      - run: uv sync --frozen
+
+      - name: Lint
+        run: |
+          uv run ruff check .
+          uv run ruff format --check .
+
+      - name: Test
+        run: uv run pytest -q
+
+      - name: Create raw schema
+        run: psql -v ON_ERROR_STOP=1 -f schema/001_raw.sql
+        env:
+          PGHOST: localhost
+          PGUSER: sift
+          PGPASSWORD: sift
+          PGDATABASE: sanctions_screening
+
+      - name: dbt build
+        working-directory: dbt/sanctions_screening_dbt
+        run: uv run dbt build --profiles-dir .
