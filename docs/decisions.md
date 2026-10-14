@@ -220,3 +220,56 @@ counts a substituted letter as two edits, so words under seven letters can't
 absorb one, and the misspelt word gets the top rarity weight; and a one-word
 target with UK or GROUP added (TRIALKOM / TRIALKOM GROUP), which the
 two-word guard keeps out of candidates entirely.
+
+## Data quality checks (dbt tests + dbt-expectations)
+
+The one-off profiling queries (explore/02_data_quality_results.txt, S1-S6,
+C1-C4, O1-O7) are now permanent tests that run on every `dbt build`: schema
+tests in models/*/schema.yml, using the metaplane/dbt_expectations package
+for regex, range and row-count checks, plus singular tests in tests/ for
+checks that span models or read the raw JSON.
+
+Why dbt tests rather than Great Expectations or Soda: every transformation
+already lives in dbt on Postgres, so the checks run in the same command,
+the same CI step and against the same models. dbt build also orders tests
+with the DAG: an error-severity failure in staging skips everything built
+on top of it, so a bad load never reaches int_name_norm or matching. Great
+Expectations and Soda would each add a second framework, configuration
+format and runtime for checks that are SQL either way. What they offer
+beyond dbt (data docs, profiling, anomaly detection over time) isn't needed
+at this size. dbt-expectations provides the Great Expectations style checks
+as dbt macros, so nothing is lost by staying in dbt.
+
+The rule: severity error if a failure would make screening wrong (a missing
+or truncated sanctions list, an unparseable birth date, a name that no
+longer normalises the same way on both sides, a target with no names left).
+Severity warn for known source quirks that staging or scoring already
+tolerates. Every test description gives the count at the 2026-09 load, so
+a change in a warning count is visible.
+
+Volume guards: stg_sanctions_target must have at least 15,000 rows (it has
+20,346), the guard against an empty upstream export like the OFSI one, and
+stg_ch_company and current person officers must not be empty. CI builds
+against an empty database, so these are gated by the dbt var
+min_rows_check (true by default, false in CI).
+
+Warnings on the current data (row counts as dbt reports them):
+
+| Test | Rows | Note |
+|---|---:|---|
+| warn_person_split_across_officer_ids | 645 | name+birth month groups over 1,437 officer IDs |
+| ch_officer_name_non_ascii | 72 | accented names; unaccent handles them |
+| warn_officer_id_conflicting_details | 39 | 38 IDs with several names, 1 with two birth dates |
+| target_name_core_short | 26 | names of 2 characters or fewer, on 25 targets |
+| warn_sanctions_shared_names | 10 | in-scope targets sharing a primary name |
+| warn_sanctions_raw_alias_duplicates | 10 | 4 alias = primary, 6 repeated aliases; deduplicated |
+| warn_company_previous_name_equals_current | 10 | renamed and renamed back; deduplicated |
+| ch_company_name_double_space | 5 | collapsed by normalisation |
+| ch_company_postcode_present | 4 | not used for matching |
+| ch_resigned_after_appointed | 2 | resigned before appointed; source error |
+| ch_person_name_has_digit | 2 | possibly corporate officers filed as persons |
+
+All error-severity tests pass. The previous-name check (C3) reported 0
+names equal to the current name during profiling; the test finds 10 exact
+matches, so the profiling query must have compared something else. They
+are harmless, since names are deduplicated per entity in int_name_norm.

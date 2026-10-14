@@ -54,6 +54,11 @@ jobs:
           PGPASSWORD: sift
           PGDATABASE: sanctions_screening
 
+      - name: dbt deps
+        working-directory: dbt/sanctions_screening_dbt
+        run: uv run dbt deps
+
+      # The database is empty in CI, so the row-count guards are switched off.
       - name: dbt build
         working-directory: dbt/sanctions_screening_dbt
-        run: uv run dbt build --profiles-dir .
+        run: uv run dbt build --profiles-dir . --vars '{min_rows_check: false}'

@@ -1,17 +1,67 @@
 version: 2
 
+# Data quality checks from explore/02_data_quality_results.txt (S1-S6,
+# C1-C4, O1-O7). severity error: screening would be wrong if it failed.
+# severity warn: a known source quirk; the description gives the count at
+# the 2026-09 load. Checks that span models or need the raw JSON are
+# singular tests in tests/.
+
 models:
   - name: stg_sanctions_target
+    tests:
+      - dbt_expectations.expect_table_row_count_to_be_between:
+          name: sanctions_target_min_rows
+          description: >
+            Volume guard. us_ofac_sdn holds 20,346 targets. Fewer than 15,000
+            means a truncated or empty export, like the header-only OFSI CSV
+            (see docs/decisions.md). Disabled when min_rows_check is false.
+          arguments:
+            min_value: 15000
+          config:
+            enabled: "{{ var('min_rows_check', true) | as_bool }}"
     columns:
       - name: target_id
         tests: [unique, not_null]
       - name: primary_name
-        tests: [not_null]
+        tests:
+          - not_null
+          - dbt_expectations.expect_column_values_to_match_regex:
+              name: sanctions_primary_name_not_blank
+              description: S1. A blank name cannot be screened. Known 0.
+              arguments:
+                regex: '\S'
+          - dbt_expectations.expect_column_values_to_not_match_regex:
+              name: sanctions_primary_name_clean_whitespace
+              description: >
+                S1. Leading or trailing space, double space, non-breaking
+                space or HTML entity. Normalisation absorbs these. Known 0.
+              arguments:
+                regex: '^\s|\s$|  | |&[a-z]+;'
+              config:
+                severity: warn
       - name: entity_group
         tests:
           - accepted_values:
               arguments:
                 values: ['person', 'organization', 'out_of_scope']
+      - name: birth_dates
+        tests:
+          - array_elements_match_regex:
+              name: sanctions_birth_dates_format
+              description: >
+                S2. Every birth date is YYYY, YYYY-MM or YYYY-MM-DD; scoring
+                slices the year and month by position. Known 0 bad of 8,337.
+              arguments:
+                regex: '^\d{4}(-\d{2}(-\d{2})?)?$'
+      - name: countries
+        tests:
+          - array_elements_match_regex:
+              name: sanctions_countries_two_letter
+              description: S3. Country codes are ISO 2-letter, lower case. Known 0 other.
+              arguments:
+                regex: '^[a-z]{2}$'
+              config:
+                severity: warn
 
   - name: stg_sanctions_name
     columns:
@@ -23,7 +73,13 @@ models:
                 to: ref('stg_sanctions_target')
                 field: target_id
       - name: name
-        tests: [not_null]
+        tests:
+          - not_null
+          - dbt_expectations.expect_column_values_to_match_regex:
+              name: sanctions_name_not_blank
+              description: S4. Empty aliases are dropped in staging. Known 0 empty.
+              arguments:
+                regex: '\S'
       - name: name_type
         tests:
           - accepted_values:
@@ -31,13 +87,67 @@ models:
                 values: ['primary', 'alias']
 
   - name: stg_ch_company
+    tests:
+      - dbt_expectations.expect_table_row_count_to_be_between:
+          name: ch_company_not_empty
+          description: Volume guard. The SIC 66300 slice holds 5,406 companies.
+          arguments:
+            min_value: 1
+          config:
+            enabled: "{{ var('min_rows_check', true) | as_bool }}"
+      - dbt_expectations.expression_is_true:
+          name: ch_company_in_sic_slice
+          description: C1. Every company carries SIC 66300. Known 0 outside.
+          arguments:
+            expression: "'66300' = any(sic_codes)"
+          config:
+            severity: warn
     columns:
       - name: company_number
-        tests: [unique, not_null]
+        tests:
+          - unique
+          - not_null
+          - dbt_expectations.expect_column_values_to_match_regex:
+              name: ch_company_number_format
+              description: >
+                C1, C2. Eight digits (England and Wales) or two letters and
+                six digits (SC, NI, OC...). Known 5,092 numeric, 267 SC, 47 NI.
+              arguments:
+                regex: '^(\d{8}|[A-Z]{2}\d{6})$'
       - name: company_name
-        tests: [not_null]
+        tests:
+          - not_null
+          - dbt_expectations.expect_column_values_to_not_match_regex:
+              name: ch_company_name_double_space
+              description: C1. Double spaces, collapsed by normalisation. Known 5.
+              arguments:
+                regex: '  |^\s|\s$'
+              config:
+                severity: warn
+      - name: company_status
+        tests:
+          - accepted_values:
+              name: ch_company_active
+              description: C1. The slice keeps Active companies only. Known 0 other.
+              arguments:
+                values: ['Active']
+              config:
+                severity: warn
       - name: incorporated_on
-        tests: [not_null]
+        tests:
+          - not_null
+          - dbt_expectations.expect_column_values_to_be_between:
+              name: ch_incorporated_not_future
+              description: C1. No incorporation date in the future. Known 0.
+              arguments:
+                max_value: current_date
+      - name: postcode
+        tests:
+          - not_null:
+              name: ch_company_postcode_present
+              description: C1. Missing registered-office postcode; not used for matching. Known 4.
+              config:
+                severity: warn
 
   - name: stg_ch_company_name
     columns:
@@ -55,6 +165,32 @@ models:
                 values: ['current', 'previous']
 
   - name: stg_ch_officer
+    tests:
+      - dbt_expectations.expect_table_row_count_to_be_between:
+          name: ch_current_person_officers_not_empty
+          description: Volume guard. 9,859 current person officer IDs in the slice.
+          arguments:
+            min_value: 1
+            row_condition: "officer_kind = 'person' and is_current"
+          config:
+            enabled: "{{ var('min_rows_check', true) | as_bool }}"
+      - dbt_expectations.expression_is_true:
+          name: ch_appointed_on_null_only_pre_1992
+          description: >
+            O2. Companies House has no appointment date for pre-1992
+            appointments, and only for those. Known 824 null, all pre-1992.
+          arguments:
+            expression: "(appointed_on is null) = is_pre_1992_appointment"
+      - dbt_expectations.expect_column_pair_values_A_to_be_greater_than_B:
+          name: ch_resigned_after_appointed
+          description: O2. Resigned before appointed; source error, kept. Known 2.
+          arguments:
+            column_A: resigned_on
+            column_B: appointed_on
+            or_equal: true
+            row_condition: "resigned_on is not null and appointed_on is not null"
+          config:
+            severity: warn
     columns:
       - name: appointment_id
         tests: [unique, not_null]
@@ -76,3 +212,76 @@ models:
           - not_null:
               config:
                 where: "officer_kind = 'person'"
+          - dbt_expectations.expect_column_values_to_not_match_regex:
+              name: ch_surname_parsed
+              description: >
+                O7. Commas and brackets are split off in staging (1,150 names
+                with a title field, 11 with brackets). None may remain in the
+                matching name.
+              arguments:
+                regex: '[,()]'
+                row_condition: "surname is not null"
+      - name: forenames
+        tests:
+          - dbt_expectations.expect_column_values_to_not_match_regex:
+              name: ch_forenames_parsed
+              description: O7. As for surname. Known 0 left after parsing.
+              arguments:
+                regex: '[,()]'
+                row_condition: "forenames is not null"
+      - name: name_raw
+        tests:
+          - dbt_expectations.expect_column_values_to_not_match_regex:
+              name: ch_person_name_has_digit
+              description: >
+                O7. Person officer names containing a digit; possibly
+                corporate officers filed as persons. Known 2.
+              arguments:
+                regex: '\d'
+                row_condition: "officer_kind = 'person'"
+              config:
+                severity: warn
+          - dbt_expectations.expect_column_values_to_not_match_regex:
+              name: ch_officer_name_non_ascii
+              description: O7. Accented names; unaccent handles them. Known 72.
+              arguments:
+                regex: '[^\x01-\x7F]'
+                row_condition: "officer_kind = 'person'"
+              config:
+                severity: warn
+      - name: birth_year
+        tests:
+          - dbt_expectations.expect_column_values_to_be_between:
+              name: ch_birth_year_range
+              description: >
+                O2. Born 1900 or later and at least 16 this year; outside that
+                the birth-date evidence in scoring is wrong. Known 0.
+              arguments:
+                min_value: 1900
+                max_value: extract(year from current_date) - 16
+                row_condition: "birth_year is not null"
+      - name: birth_month
+        tests:
+          - dbt_expectations.expect_column_values_to_be_between:
+              name: ch_birth_month_range
+              description: O2. Known 0 outside 1-12.
+              arguments:
+                min_value: 1
+                max_value: 12
+                row_condition: "birth_month is not null"
+      - name: appointed_on
+        tests:
+          - dbt_expectations.expect_column_values_to_be_between:
+              name: ch_appointed_not_future
+              description: O2. Known 0.
+              arguments:
+                max_value: current_date
+                row_condition: "appointed_on is not null"
+      - name: resigned_on
+        tests:
+          - dbt_expectations.expect_column_values_to_be_between:
+              name: ch_resigned_not_future
+              description: O2. A future resignation would wrongly drop a current officer. Known 0.
+              arguments:
+                max_value: current_date
+                row_condition: "resigned_on is not null"

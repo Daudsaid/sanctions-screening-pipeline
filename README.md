@@ -70,6 +70,21 @@ Companies House officers API ┘                       │
   and for nationality. Every score comes with its reasons, for example
   `name 96: [officer] / ALI MOHAMMED; -5 nationality differs (gb vs pk, sa)`.
 
+## Data quality
+
+The data quality checks from profiling run as dbt tests on every
+`dbt build`: built-in tests, [dbt-expectations](https://github.com/metaplane/dbt-expectations)
+for regex, range and row-count checks, and singular SQL tests for checks
+across models. A check is an error if a failure would make screening wrong:
+fewer than 15,000 sanctions targets (an empty or truncated export), a
+malformed birth date or company number, a date in the future, a name that
+no longer normalises cleanly, or a sanctions target left with no name. An
+error stops the build before matching runs. Known source quirks, such as
+2 officers who resigned before they were appointed or 645 people split
+across several officer IDs, are warnings, with the expected count in each
+test's description. The full list is in
+[docs/decisions.md](docs/decisions.md#data-quality-checks-dbt-tests--dbt-expectations).
+
 ## Evaluation
 
 True matches are too rare in this data to measure recall, so the evaluation
@@ -121,7 +136,7 @@ uv run --env-file .env python -m ingest.companies_house_officers   # about an ho
 Transform, match and evaluate:
 
 ```sh
-make dbt-build      # seeds, staging and intermediate models, and their tests
+make dbt-build      # dbt deps, then seeds, models and data quality tests
 make candidates     # match_candidate
 make score          # match_score
 make eval           # rewrites the tables in docs/evaluation.md
@@ -129,7 +144,8 @@ make eval           # rewrites the tables in docs/evaluation.md
 
 Development checks: `make lint`, `make test`, `make dbt-unit`, or all three
 with `make check`. CI runs lint, pytest, and `dbt build` against an empty
-Postgres.
+Postgres, with the row-count checks switched off
+(`--vars '{min_rows_check: false}'`).
 
 ## Known gaps
 

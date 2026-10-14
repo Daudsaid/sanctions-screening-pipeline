@@ -48,3 +48,9 @@ seeds:
       +column_types:
         phrase: text
         position: text
+
+vars:
+  # Volume tests guard against an empty or truncated upstream export. CI
+  # builds against an empty database and sets this to false.
+  min_rows_check: true
+  "dbt_date:time_zone": "Europe/London"

@@ -5,8 +5,36 @@ models:
     columns:
       - name: name_id
         tests: [unique, not_null]
+      - name: name_norm
+        tests:
+          - dbt_expectations.expect_column_values_to_match_regex:
+              name: name_norm_shape
+              description: >
+                Normalised names are upper-case words of A-Z and 0-9 separated
+                by single spaces; anything else means normalise_name changed
+                and the two sides may no longer compare. Known 0.
+              arguments:
+                regex: '^[A-Z0-9]+( [A-Z0-9]+)*$'
       - name: name_core
-        tests: [not_null]
+        tests:
+          - not_null
+          - dbt_expectations.expect_column_values_to_match_regex:
+              name: name_core_shape
+              description: As for name_norm, after legal forms are stripped. Known 0.
+              arguments:
+                regex: '^[A-Z0-9]+( [A-Z0-9]+)*$'
+          - dbt_expectations.expect_column_value_lengths_to_be_between:
+              name: target_name_core_short
+              description: >
+                Target names of two characters or fewer (NK, BS, IM, H1);
+                trigram and edit-distance similarity are unreliable for them,
+                so scoring requires exact agreement. Known 26 names on 25
+                targets (22 organisations, 3 persons).
+              arguments:
+                min_value: 3
+                row_condition: "side = 'target'"
+              config:
+                severity: warn
       - name: side
         tests:
           - accepted_values:
