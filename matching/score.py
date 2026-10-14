@@ -11,13 +11,15 @@ keeping the best-scoring pair of names between them.
    exactly: one letter is too much of a short word (IFC / IFDC, TACO /
    TAFCO) to count as a spelling variant.
 2. Date of birth (persons only), added to the name score:
-     same year and month                 +15
-     same year, target gives year only   +10
-     same year, different month           +5
-     no target date within a year        -40
-     either side missing                   0
+     same year and month                  +15
+     same year, target gives year only    +10
+     1-11 months apart                     +5
+     no target date within a year         -40
+     either side missing                    0
    Companies House gives year and month, so that is the finest comparison.
-   A clear conflict is strong evidence of a different person.
+   The gap is counted in months, so 1989-12 and 1990-01 are one month apart,
+   not different years. A clear conflict is strong evidence of a different
+   person.
 3. Nationality (persons only): +5 if any officer nationality is among the
    target's countries, -5 if both are known and none overlap. Small, because
    OFAC "countries" mixes nationality, citizenship and residence.
@@ -38,7 +40,8 @@ MIN_WEIGHT = 0.1
 
 DOB_MONTH = 15
 DOB_YEAR_ONLY_TARGET = 10
-DOB_YEAR = 5
+DOB_NEAR = 5
+DOB_NEAR_MONTHS = 11  # same width as "same year, different month"
 DOB_CONFLICT = -40
 NAT_MATCH = 5
 NAT_MISMATCH = -5
@@ -92,14 +95,25 @@ def dob_evidence(year: int | None, month: int | None, target_dates: list[str]) -
     for d in target_dates:
         t_year = int(d[:4])
         t_month = int(d[5:7]) if len(d) >= 7 else None
-        if t_year != year:
-            continue
-        if t_month is None:
-            score = (DOB_YEAR_ONLY_TARGET, f"birth year {year} matches (target gives year only)")
-        elif month is not None and t_month == month:
-            score = (DOB_MONTH, f"birth month {year}-{month:02d} matches")
+        if t_month is None or month is None:
+            if t_year != year:
+                continue
+            if t_month is None:
+                score = (
+                    DOB_YEAR_ONLY_TARGET,
+                    f"birth year {year} matches (target gives year only)",
+                )
+            else:
+                score = (DOB_NEAR, f"birth year {year} matches, month unknown")
         else:
-            score = (DOB_YEAR, f"birth year {year} matches, month differs")
+            gap = abs((year * 12 + month) - (t_year * 12 + t_month))
+            if gap == 0:
+                score = (DOB_MONTH, f"birth month {year}-{month:02d} matches")
+            elif gap <= DOB_NEAR_MONTHS:
+                months = f"{gap} month{'s' * (gap > 1)}"
+                score = (DOB_NEAR, f"birth month {year}-{month:02d} within {months} of {d[:7]}")
+            else:
+                continue
         if best is None or score[0] > best[0]:
             best = score
     if best:

@@ -51,6 +51,9 @@ Companies House officers API ┘                       │
                           (rarity-weighted name score + birth date
                            + nationality, with reasons)
                                                      │
+                          matching/alert.py  ─> match_alert
+                          (one row per subject at score >= 70)
+                                                     │
                           eval/evaluate.py   ─> docs/evaluation.md
                           (planted matches, recall vs alert volume)
 ```
@@ -66,9 +69,14 @@ Companies House officers API ┘                       │
   subject name with every target name of the same kind (about 330M pairs,
   two minutes on a laptop). No blocking, so this step can't miss a pair.
 - **Scoring** ([matching/score.py](matching/score.py)) matches words one to
-  one, weighted by rarity, then adds or subtracts for birth year and month
-  and for nationality. Every score comes with its reasons, for example
-  `name 96: [officer] / ALI MOHAMMED; -5 nationality differs (gb vs pk, sa)`.
+  one, weighted by rarity, then adds or subtracts for birth date (compared
+  to the month) and for nationality. Every score comes with its reasons, for
+  example `name 96: [officer] / ALI MOHAMMED; +5 birth month [birth month] within
+  1 month of 1968-01; -5 nationality differs (gb vs pk, sa)`.
+- **Alerts** ([matching/alert.py](matching/alert.py)) turn pairs scoring 70
+  or more into one alert per subject, listing every target it hits, and fold
+  together officers with the same name at the same company (Companies House
+  sometimes files one person twice).
 
 ## Data quality
 
@@ -102,7 +110,8 @@ At the chosen threshold of 70:
 | Persons (with matching birth date / name only) | 100% / 96% |
 | Organisations | 96% |
 | Organisations with a typo | 84% |
-| Alerts on real subjects (about 15,500) | 33 (5 person, 28 organisation) |
+| Alerting pairs on real subjects (about 15,500) | 33 (5 person, 28 organisation) |
+| Alerts to review, grouped per subject | 26 |
 | Alerts on birth-date-conflict plants | 0 of 100 |
 
 These are measured on synthetic, single-change plants, so they are an upper
@@ -139,6 +148,7 @@ Transform, match and evaluate:
 make dbt-build      # dbt deps, then seeds, models and data quality tests
 make candidates     # match_candidate
 make score          # match_score
+make alerts         # match_alert: one row per subject to review
 make eval           # rewrites the tables in docs/evaluation.md
 ```
 

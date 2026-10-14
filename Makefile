@@ -1,7 +1,7 @@
 RUN := uv run --env-file $(CURDIR)/.env
 DBT_DIR := dbt/sanctions_screening_dbt
 
-.PHONY: up schema lint test dbt-deps dbt-build dbt-unit candidates score eval check
+.PHONY: up schema lint test dbt-deps dbt-build dbt-unit candidates score alerts eval check
 
 up:
 	docker compose up -d --wait
@@ -32,6 +32,9 @@ candidates:
 
 score:
 	$(RUN) python -m matching.score
+
+alerts:
+	$(RUN) python -m matching.alert
 
 eval:
 	$(RUN) python -m eval.evaluate

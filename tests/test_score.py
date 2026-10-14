@@ -5,7 +5,7 @@ import pytest
 from matching.score import (
     DOB_CONFLICT,
     DOB_MONTH,
-    DOB_YEAR,
+    DOB_NEAR,
     DOB_YEAR_ONLY_TARGET,
     dob_evidence,
     name_score,
@@ -60,9 +60,13 @@ def test_each_word_matches_once():
     [
         (1980, 6, ["1980-06-15"], DOB_MONTH),
         (1980, 6, ["1980"], DOB_YEAR_ONLY_TARGET),
-        (1980, 6, ["1980-09-01"], DOB_YEAR),
+        (1980, 6, ["1980-09-01"], DOB_NEAR),
+        (1989, 12, ["1990-01-05"], DOB_NEAR),  # one month apart across new year
+        (1991, 12, ["1992-05-07"], DOB_NEAR),
+        (1980, 1, ["1980-12-01"], DOB_NEAR),  # 11 months, the widest "near"
+        (1980, 1, ["1981-01-01"], 0),  # 12 months: within a year, neither way
+        (1980, 6, ["1981"], 0),  # year-only target, one year out
         (1980, 6, ["1950-01-01"], DOB_CONFLICT),
-        (1991, 12, ["1992-05-07"], 0),  # within a year: neither for nor against
         (1980, 6, ["1950-01-01", "1980-06-02"], DOB_MONTH),  # best date wins
         (None, None, ["1980-06-15"], 0),
         (1980, 6, [], 0),

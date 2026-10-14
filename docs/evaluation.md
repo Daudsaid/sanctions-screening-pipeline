@@ -45,16 +45,16 @@ Seed 20261014. 300 true plants (100 person, 200 organisation), 100 person plants
 
 | Threshold | Recall, all | Recall, persons | Recall, persons without DOB | Recall, orgs | Real alerts, persons | Real alerts, orgs | DOB-conflict alerts |
 |---:|---:|---:|---:|---:|---:|---:|---:|
-| 50 | 98% | 100% | 100% | 97% | 34 | 143 | 53 of 100 |
+| 50 | 98% | 100% | 100% | 97% | 35 | 143 | 53 of 100 |
 | 55 | 97% | 100% | 100% | 96% | 19 | 88 | 39 of 100 |
 | 60 | 97% | 100% | 99% | 96% | 14 | 57 | 19 of 100 |
 | 65 | 97% | 100% | 98% | 96% | 10 | 38 | 0 of 100 |
 | 70 | 97% | 100% | 96% | 96% | 5 | 28 | 0 of 100 |
 | 75 | 96% | 99% | 92% | 94% | 4 | 18 | 0 of 100 |
-| 80 | 95% | 98% | 86% | 93% | 3 | 12 | 0 of 100 |
+| 80 | 95% | 98% | 86% | 93% | 4 | 12 | 0 of 100 |
 | 85 | 91% | 96% | 79% | 89% | 3 | 11 | 0 of 100 |
 | 90 | 86% | 91% | 58% | 84% | 3 | 7 | 0 of 100 |
-| 95 | 73% | 85% | 43% | 66% | 2 | 2 | 0 of 100 |
+| 95 | 73% | 85% | 43% | 66% | 3 | 2 | 0 of 100 |
 
 Recall per change type (true plants only; person plants include the birth-date bonus):
 
@@ -76,15 +76,17 @@ Recall per change type (true plants only; person plants include the birth-date b
 
 Alert at a score of 70 or more. At 70, 97% of true plants alert (291 of 300),
 including every person plant with a matching birth date and 96% of person
-plants scored on name alone. On the real data that is 33 alerts (5 person,
-28 organisation) across about 10,100 officers and 5,400 companies. No
+plants scored on name alone. On the real data that is 33 subject-target
+pairs (5 person, 28 organisation) across about 10,100 officers and 5,400
+companies, which matching/alert.py groups into 26 alerts to review: one
+company alone accounts for six pairs. No
 DOB-conflict plant alerts at 65 or above, because a 40-point conflict caps a
 perfect name at 60, or 65 with a nationality match. 70 keeps a margin above
-that ceiling. Raising the threshold to 80 halves the real alerts (15) but
+that ceiling. Raising the threshold to 80 halves the real pairs (16) but
 loses six true plants, mostly organisation typos, and name-only person recall
 falls from 96% to 86%. Each real alert is a few minutes of analyst time,
-while a missed designated party is a breach, so the extra 18 alerts are worth
-it. Going below 65 buys almost no recall and lets birth-date conflicts
+while a missed designated party is a breach, so the extra 12 alerts (17
+pairs) are worth it. Going below 65 buys almost no recall and lets birth-date conflicts
 through. The sample is small (20 true plants per person change type), so
 these figures are estimates to within a few points.
 
@@ -128,9 +130,12 @@ subjects.
   bound on single-change cases.
 - Plants are built from primary names. Aliases are matched too, which helps
   real matches but isn't measured separately.
-- Real subjects are assumed to be negatives. None of the 15 pairs at 80 or
-  above look like true matches (see docs/decisions.md), but pairs between 70
-  and 80 have not been reviewed one by one.
+- Real subjects are assumed to be negatives. All 33 pairs at 70 or above
+  were reviewed by name, birth date and nationality (see docs/decisions.md,
+  "Alerts"). None is an obvious true match, but a few need an analyst with
+  more than this data: [company] against [sanctioned firm] (listed with a UK link), [officer] (nationality matches,
+  birth date five months off) and [officer] (birth date one month off,
+  nationality differs).
 - The real-alert counts are for this slice of about 15,500 subjects. They
   will scale with the register, and organisation alerts are driven by
   generic words that a larger slice will contain more of.

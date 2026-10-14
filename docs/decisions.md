@@ -186,13 +186,15 @@ with the reasons stored next to it, so every alert can be explained.
   PSC / PBSC and TACO / TAFCO scored 86-89, and 21 organisation pairs
   reached 80 instead of 12.
 - Date of birth (persons): +15 same year and month, +10 same year when the
-  target gives a year only, +5 same year, -40 when no target date is within a
-  year, 0 when either side is missing or the years are one apart (OFAC dates
-  are sometimes approximate).
+  target gives a year only, +5 when 1-11 months apart, -40 when no target
+  date is within a year, 0 when either side is missing or the dates are
+  further apart but within a year (OFAC dates are sometimes approximate).
+  The gap is counted in months: comparing years made 1989-12 and 1990-01
+  "different years", worth nothing, while 1989-01 and 1989-12 earned +5.
 - Nationality (persons): +5 overlap, -5 both known and no overlap. Kept small
   because OFAC countries mix nationality and residence.
 
-Weights are hand-set. On the real data, 3,709 pairs are scored; 3 person and
+Weights are hand-set. On the real data, 3,709 pairs are scored; 4 person and
 12 organisation pairs reach 80. None look like true matches: the top is
 exact name collisions ([company], [officer], where one officer ID has a
 birth date five months from the target's and the other has none) and
@@ -210,9 +212,10 @@ treated as negatives. Plants go through the production candidate_pairs and
 score_pair with the production word weights.
 
 Alert threshold: 70. At 70, recall is 97% of 300 true plants (persons 100%,
-96% on name alone, organisations 96%), with 33 alerts on real subjects
-(5 person, 28 organisation) and no birth-date-conflict plant alerting. At 80
-the real alerts fall to 15 but recall drops to 95%, and to 86% for persons
+96% on name alone, organisations 96%), with 33 pairs on real subjects
+(5 person, 28 organisation), grouped into 26 alerts, and no
+birth-date-conflict plant alerting. At 80 the real pairs fall to 16
+(14 alerts) but recall drops to 95%, and to 86% for persons
 scored on name alone. A conflict caps a perfect name at 60 (65 with a
 nationality match), so 70 keeps a margin above that.
 
@@ -306,3 +309,33 @@ Left as they are: sanctioned persons whose aliases are online handles
 (@bassterlord, H4mid@Tm3l, jackrock#3337; 12 names contain @ or #) are
 screened like any other name, and one company registered without its
 Portuguese accents (GESTO DE PARTICIPAES) cannot be repaired on our side.
+
+## Alerts (matching/alert.py)
+
+match_score has one row per subject-target pair, but an analyst reviews a
+subject. Reviewing the 33 pairs at 70 showed two kinds of repetition:
+
+- One subject against several targets. [company] scored
+  70+ against six sanctioned exchange houses ("Atlas Currency Exchange",
+  "Sina Currency Exchange Company"...), because CURRENCY and EXCHANGE are
+  rare among UK fund managers and weigh a lot. [company] hit two different
+  entities both called Tamyna.
+- One person under two officer IDs. [officer] is director and secretary of
+  the same company; only the director record has a birth date, so the
+  name+DOB duplicate check (645 groups) can't see it.
+
+match_alert holds one row per subject at or above the threshold, listing
+every target with its score, best first. Officers with the same matched
+name who share a current company are folded into one alert. Officers who
+only share a name, at different companies, stay separate (merging those is
+entity resolution, and a wrong merge is worse than a duplicate alert).
+Scores are untouched.
+
+At 70: 33 pairs become 26 alerts (4 person, 22 organisation). At 80:
+16 pairs, 14 alerts. The evaluation still counts pairs, since recall is
+measured per subject-target pair.
+
+The same review led to the month-gap birth-date rule above. It raised
+[officer] (born [birth month], target 1968-01-05) from 91 to 96 and [officer] ([birth month] against 1975-01-11) from 78 to 83. Recall on the plants is
+unchanged (true plants have exact months; conflict plants are years away).
+
