@@ -172,3 +172,28 @@ words (ASSET MANAGEMENT, INVESTMENTS), and only a handful of person
 candidates agree on birth year, none closely. That is expected for a slice of
 UK fund managers, and it means the evaluation set needs seeded true matches:
 natural true positives will be too rare to measure recall.
+
+## Scoring (matching/score.py)
+
+Each subject-target pair gets one 0-100 score from its best pair of names,
+with the reasons stored next to it, so every alert can be explained.
+
+- Name: words matched one to one, spelling variants allowed (fuzz.ratio >=
+  85), each word weighted by rarity (IDF over both sides). A shared ROMASHKA
+  counts far more than a shared MANAGEMENT or MOHAMMED, so "[company]" against "ATLAS CURRENCY EXCHANGE" scores 78, not 100. Words of
+  four letters or fewer must match exactly: without that rule IFC / IFDC,
+  PSC / PBSC and TACO / TAFCO scored 86-89, and 21 organisation pairs
+  reached 80 instead of 12.
+- Date of birth (persons): +15 same year and month, +10 same year when the
+  target gives a year only, +5 same year, -40 when no target date is within a
+  year, 0 when either side is missing or the years are one apart (OFAC dates
+  are sometimes approximate).
+- Nationality (persons): +5 overlap, -5 both known and no overlap. Kept small
+  because OFAC countries mix nationality and residence.
+
+Weights are hand-set. On the real data, 3,708 pairs are scored; 3 person and
+12 organisation pairs reach 80. None look like true matches: the top is
+exact name collisions ([company], [officer], where one officer ID has a
+birth date five months from the target's and the other has none) and
+spelling variants ([company] / INPESCA). The alert threshold, and whether the
+weights hold up, are for the evaluation set to decide.
