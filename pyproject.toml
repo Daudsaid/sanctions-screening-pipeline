@@ -1,7 +1,7 @@
 [project]
 name = "sanctions-screening-pipeline"
 version = "0.1.0"
-description = "Add your description here"
+description = "Screens Companies House officers and companies against sanctions lists, with explainable scores and a measured alert threshold"
 requires-python = ">=3.12"
 dependencies = [
     "httpx>=0.28.1",
