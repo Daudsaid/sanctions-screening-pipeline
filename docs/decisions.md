@@ -110,10 +110,11 @@ courtesy titles and, in places, job titles ("Director", "Ceo"). Everything
 after the second comma goes to name_title and is excluded from matching.
 Bracketed text (nicknames, former names) goes to name_note. A leading title in
 the forenames (LORD, SIR, DR, DAME, LADY, REV, PROF, MR, MRS, MS, MISS) is
-stripped as a whole word only. The data-quality check reported 1,005
-"title in forenames", but it matched substrings (DR inside ANDREW); the
-whole-word count is in analyses/leading_titles_in_forenames.sql, and a
-warning test flags any title still left after stripping.
+stripped as a whole word only. On the real data that is 5 cases, all LORD,
+with none left after stripping. (The data-quality check reported 1,005
+"title in forenames" because it matched substrings, such as DR inside ANDREW.
+analyses/leading_titles_in_forenames.sql has the whole-word count, and a
+warning test flags any title left after stripping.)
 
 Nationality is free text with 304 spellings (British/English/United Kingdom,
 American/Usa/United States, combined "British,American"). Mapped to ISO codes
@@ -137,6 +138,37 @@ target loses every name), and 2,201 merge into another spelling of the same
 name, leaving 40,027. Subjects: 9,859 person officers, 272 corporate
 officers, 5,406 companies (6,518 names including previous names).
 
+Mixed-script names are dropped: 320 OFAC names are mostly Cyrillic with a
+few stray Latin letters (a Belarusian i, a Latin C or O, or OOO before a
+Cyrillic name), which normalised to junk such as C (79 targets), OOO (48)
+and I (19). A name is kept only if at least half of its letters are Latin.
+No target loses every name. int_name_norm then holds 56,382 names.
+
 Known limitations: "& Co." is stripped as a legal form even where it is
 part of a trading name. Very short cores (e.g. NKK, BS) give unreliable
 trigram similarity, so scoring requires near-exact agreement for them.
+
+## Candidate generation (matching/block.py)
+
+No blocking in v1. Every subject name is compared with every target name of
+the same kind with rapidfuzz: 9,869 x 18,253 person names and 6,793 x 21,467
+organisation names, about 330M pairs, in roughly two minutes on a laptop.
+Blocking exists to make comparison affordable; here comparison is already
+affordable, and comparing everything means candidate generation cannot miss
+a pair. It becomes necessary if the subject side grows to the full register
+(about 5M companies and many more officers): then block on rare words and a
+phonetic key per word, and measure the recall lost against this exhaustive
+version.
+
+A pair is a candidate if token_sort_ratio >= 80 (same words in any order,
+spelling variation allowed), or token_set_ratio >= 90 when both names have at
+least two distinct words (one name contains the other). Without that guard
+token_set_ratio scores single-word targets such as MARTIN or IM at 100
+against any name containing them, and ANTHONY ANTHONY against any Anthony.
+
+Result: 530 person and 3,440 organisation candidate name pairs. Candidates
+are generous on purpose. Most organisation candidates share only generic
+words (ASSET MANAGEMENT, INVESTMENTS), and only a handful of person
+candidates agree on birth year, none closely. That is expected for a slice of
+UK fund managers, and it means the evaluation set needs seeded true matches:
+natural true positives will be too rare to measure recall.
