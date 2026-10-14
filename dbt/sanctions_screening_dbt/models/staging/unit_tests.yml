@@ -8,7 +8,9 @@ unit_tests:
     description: >
       "SURNAME, Forenames, Title": the third field goes to name_title,
       bracketed text to name_note, and a leading title is stripped only when
-      it is a whole word (ANDREW and DREW keep their DR).
+      it is a whole word (ANDREW and DREW keep their DR). A repeated comma is
+      collapsed, and a company filed under a person role becomes an
+      organization with its name put back in order.
     model: stg_ch_officer
     given:
       - input: source('raw', 'raw_ch_officer')
@@ -29,7 +31,11 @@ unit_tests:
               "resigned_on": "2024-03-31",
               "links": {"self": "/company/00000001/appointments/A5", "officer": {"appointments": "/officers/O5/appointments"}}}'),
             (6, '00000001', '{"name": "ACME HOLDINGS LIMITED", "officer_role": "corporate-director",
-              "links": {"self": "/company/00000001/appointments/A6", "officer": {"appointments": "/officers/O6/appointments"}}}')
+              "links": {"self": "/company/00000001/appointments/A6", "officer": {"appointments": "/officers/O6/appointments"}}}'),
+            (7, '00000001', '{"name": "DUPONT-MARCHAND,, Jean Luc", "officer_role": "director",
+              "links": {"self": "/company/00000001/appointments/A7", "officer": {"appointments": "/officers/O7/appointments"}}}'),
+            (8, '00000001', '{"name": "LIMITED, Tmf Group Fund Services (Guernsey)", "officer_role": "secretary",
+              "links": {"self": "/company/00000001/appointments/A8", "officer": {"appointments": "/officers/O8/appointments"}}}')
           ) as v(id, company_number, raw)
     expect:
       rows:
@@ -39,6 +45,8 @@ unit_tests:
         - {appointment_id: A4, officer_id: O4, officer_kind: person, surname: DOE, forenames: Jane, name_title: null, name_note: null, full_name: Jane DOE, is_current: true}
         - {appointment_id: A5, officer_id: O5, officer_kind: person, surname: JONES, forenames: Mary, name_title: null, name_note: NEE BROWN, full_name: Mary JONES, is_current: false}
         - {appointment_id: A6, officer_id: O6, officer_kind: organization, surname: null, forenames: null, name_title: null, name_note: null, full_name: ACME HOLDINGS LIMITED, is_current: true}
+        - {appointment_id: A7, officer_id: O7, officer_kind: person, surname: DUPONT-MARCHAND, forenames: Jean Luc, name_title: null, name_note: null, full_name: Jean Luc DUPONT-MARCHAND, is_current: true}
+        - {appointment_id: A8, officer_id: O8, officer_kind: organization, surname: null, forenames: null, name_title: null, name_note: null, full_name: Tmf Group Fund Services (Guernsey) LIMITED, is_current: true}
 
   - name: officer_latest_version_wins
     description: When an appointment lands twice, staging keeps the most recent version.

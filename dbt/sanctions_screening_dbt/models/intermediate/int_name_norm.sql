@@ -21,7 +21,7 @@ all_names as (
 
     union
 
-    select 'subject', 'organization', 'officer', officer_id, name_raw
+    select 'subject', 'organization', 'officer', officer_id, full_name
     from {{ ref('stg_ch_officer') }}
     where officer_kind = 'organization' and is_current
 

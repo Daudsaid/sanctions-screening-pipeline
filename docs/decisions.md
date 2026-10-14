@@ -54,14 +54,15 @@ iCloud. Moving the project to ~/dev fixed it: dbt debug went from over
 - Aliases: 5,494 of 30,547 (18%) contain no Latin letters, but every
   screenable target has at least one Latin name. Non-Latin script costs name
   variants, never whole targets.
-- Officers: 26,192 person appointments, all in "SURNAME, Forenames" form
-  (enforced by a test). 1,906 corporate officer appointments are matched on
-  the organisation side.
+- Officers: 26,186 person appointments, all in "SURNAME, Forenames" form
+  (enforced by a test). 1,912 corporate officer appointments are matched on
+  the organisation side, including 6 companies filed under a person role
+  (see "Officer and company name repairs" below).
   3,103 secretaries have no date of birth and can only match on name.
 - 21,613 distinct officer IDs across 28,098 appointments (20,772 of them
   person IDs), so screening is per officer ID. This is an upper bound on
   people: Companies House does not always merge one person's records. After
-  the current-officers filter below, 9,859 person and 272 corporate officer
+  the current-officers filter below, 9,856 person and 275 corporate officer
   IDs remain as subjects.
 - 56% of appointments have ended. v1 alerts on current officers only; resigned
   officers stay in staging. Known gap: an officer who resigned after
@@ -135,7 +136,7 @@ weighting. If stripping would leave nothing, the full name is kept.
 
 Of 47,641 in-scope sanctions names, 5,413 are non-Latin and drop out (no
 target loses every name), and 2,201 merge into another spelling of the same
-name, leaving 40,027. Subjects: 9,859 person officers, 272 corporate
+name, leaving 40,027. Subjects: 9,856 person officers, 275 corporate
 officers, 5,406 companies (6,518 names including previous names).
 
 Mixed-script names are dropped: 320 OFAC names are mostly Cyrillic with a
@@ -151,7 +152,7 @@ trigram similarity, so scoring requires near-exact agreement for them.
 ## Candidate generation (matching/block.py)
 
 No blocking in v1. Every subject name is compared with every target name of
-the same kind with rapidfuzz: 9,869 x 18,253 person names and 6,793 x 21,467
+the same kind with rapidfuzz: 9,866 x 18,253 person names and 6,796 x 21,467
 organisation names, about 330M pairs, in roughly two minutes on a laptop.
 Blocking exists to make comparison affordable; here comparison is already
 affordable, and comparing everything means candidate generation cannot miss
@@ -166,7 +167,7 @@ least two distinct words (one name contains the other). Without that guard
 token_set_ratio scores single-word targets such as MARTIN or IM at 100
 against any name containing them, and ANTHONY ANTHONY against any Anthony.
 
-Result: 530 person and 3,440 organisation candidate name pairs. Candidates
+Result: 530 person and 3,441 organisation candidate name pairs. Candidates
 are generous on purpose. Most organisation candidates share only generic
 words (ASSET MANAGEMENT, INVESTMENTS), and only a handful of person
 candidates agree on birth year, none closely. That is expected for a slice of
@@ -191,7 +192,7 @@ with the reasons stored next to it, so every alert can be explained.
 - Nationality (persons): +5 overlap, -5 both known and no overlap. Kept small
   because OFAC countries mix nationality and residence.
 
-Weights are hand-set. On the real data, 3,708 pairs are scored; 3 person and
+Weights are hand-set. On the real data, 3,709 pairs are scored; 3 person and
 12 organisation pairs reach 80. None look like true matches: the top is
 exact name collisions ([company], [officer], where one officer ID has a
 birth date five months from the target's and the other has none) and
@@ -266,6 +267,8 @@ Warnings on the current data (row counts as dbt reports them):
 | warn_company_previous_name_equals_current | 10 | renamed and renamed back; deduplicated |
 | ch_company_name_double_space | 5 | collapsed by normalisation |
 | ch_company_postcode_present | 4 | not used for matching |
+| warn_officer_name_repairs | 5 | 3 current companies filed as persons, 2 repeated commas; repaired |
+| warn_company_name_trailing_the | 2 | names ending "(THE)"; legal form now stripped |
 | ch_resigned_after_appointed | 2 | resigned before appointed; source error |
 | ch_person_name_has_digit | 2 | possibly corporate officers filed as persons |
 
@@ -273,3 +276,33 @@ All error-severity tests pass. The previous-name check (C3) reported 0
 names equal to the current name during profiling; the test finds 10 exact
 matches, so the profiling query must have compared something else. They
 are harmless, since names are deduplicated per entity in int_name_norm.
+
+## Officer and company name repairs
+
+A second exploration pass, looking for inconsistencies the tests didn't
+cover, found three that changed what gets screened:
+
+- Companies filed under a person role. Companies House splits their names
+  like a person's ("LIMITED, Propensions"), so they were screened against
+  sanctioned persons only and could never match a sanctioned company. A
+  person-role name whose surname field ends in LIMITED, LTD, LLP or PLC is
+  now an organization named in the right order ("Propensions LIMITED"),
+  flagged filed_as_person. 6 appointments, 3 of them current.
+- A repeated comma ("SURNAME,, Forenames") pushed the
+  forenames into the title field, which matching ignores, so a current
+  director was screened on his surname alone. Repeated commas are collapsed
+  before the name is split.
+- "HOOVER TRUST FUND LIMITED(THE)" normalised to HOOVER TRUST FUND LIMITED
+  THE, so LIMITED was never stripped. THE is now stripped from both ends in
+  the legal_forms seed. Only these 2 names end in THE, on either side.
+
+Effect: 3 officer IDs move from the person side to the organisation side,
+1 organisation candidate is added ([company] / TCH CONSULTANCY, score
+38), and alert counts at every threshold are unchanged. Recall at 70 is
+still 97%. At 60, DOB-conflict plant alerts went from 21 to 19, because
+word weights shift slightly when the subject names change.
+
+Left as they are: sanctioned persons whose aliases are online handles
+(@bassterlord, H4mid@Tm3l, jackrock#3337; 12 names contain @ or #) are
+screened like any other name, and one company registered without its
+Portuguese accents (GESTO DE PARTICIPAES) cannot be repaired on our side.

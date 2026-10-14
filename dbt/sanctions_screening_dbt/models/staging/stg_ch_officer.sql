@@ -2,6 +2,10 @@
 -- second comma is a title field (courtesy titles, sometimes job titles) and
 -- is kept out of the matching name. Bracketed text (nicknames, former names)
 -- moves to name_note. A leading title in the forenames is stripped.
+-- Repeated commas ("SURNAME,, Forenames") are collapsed before splitting.
+-- A company filed under a person role arrives split like a person
+-- ("LIMITED, Propensions"); when the surname field ends in a legal form it
+-- becomes an organization named "Propensions LIMITED" (filed_as_person).
 with latest as (
     select
         *,
@@ -22,8 +26,9 @@ shaped as (
         case
             when raw ->> 'officer_role' like 'corporate%' then 'organization'
             else 'person'
-        end as officer_kind,
+        end as role_kind,
         raw ->> 'name' as name_raw,
+        regexp_replace(raw ->> 'name', ',(\s*,)+', ',', 'g') as name_split,
         nullif(trim(raw ->> 'nationality'), '') as nationality,
         nullif(raw ->> 'country_of_residence', '') as country_of_residence,
         (raw -> 'date_of_birth' ->> 'year')::int as birth_year,
@@ -40,16 +45,23 @@ shaped as (
 parts as (
     select
         *,
-        case when officer_kind = 'person' and name_raw like '%,%'
-            then split_part(name_raw, ',', 1) end as surname_part,
-        case when officer_kind = 'person' and name_raw like '%,%'
-            then split_part(name_raw, ',', 2) end as forenames_part,
-        case when officer_kind = 'person'
-            then nullif(trim(substring(name_raw from '^[^,]*,[^,]*,(.*)$')), '') end as name_title,
-        case when officer_kind = 'person'
-            then substring(split_part(name_raw, ',', 1) || ' ' || split_part(name_raw, ',', 2)
+        case when role_kind = 'person' and name_split like '%,%'
+            then split_part(name_split, ',', 1) end as surname_part,
+        case when role_kind = 'person' and name_split like '%,%'
+            then split_part(name_split, ',', 2) end as forenames_part,
+        case when role_kind = 'person'
+            then nullif(trim(substring(name_split from '^[^,]*,[^,]*,(.*)$')), '') end as name_title,
+        case when role_kind = 'person'
+            then substring(split_part(name_split, ',', 1) || ' ' || split_part(name_split, ',', 2)
                            from '\(([^)]*)\)') end as name_note
     from shaped
+),
+
+kinds as (
+    select
+        *,
+        coalesce(trim(surname_part) ~* '(^|\s)(LIMITED|LTD|LLP|PLC)$', false) as filed_as_person
+    from parts
 ),
 
 cleaned as (
@@ -60,7 +72,7 @@ cleaned as (
             regexp_replace(forenames_part, '\s*\([^)]*\)', '', 'g'),
             '^\s*(LORD|SIR|DR|DAME|LADY|REV|PROF|MR|MRS|MS|MISS)\.?\s+', '', 'i'
         )) as forenames
-    from parts
+    from kinds
 )
 
 select
@@ -68,14 +80,17 @@ select
     officer_id,
     company_number,
     officer_role,
-    officer_kind,
+    case when filed_as_person then 'organization' else role_kind end as officer_kind,
+    filed_as_person,
     name_raw,
-    surname,
-    forenames,
-    name_title,
-    name_note,
+    case when not filed_as_person then surname end as surname,
+    case when not filed_as_person then forenames end as forenames,
+    case when not filed_as_person then name_title end as name_title,
+    case when not filed_as_person then name_note end as name_note,
     case
-        when officer_kind = 'person' and surname is not null
+        when filed_as_person
+            then trim(trim(forenames_part) || ' ' || trim(surname_part))
+        when role_kind = 'person' and surname is not null
             then trim(coalesce(forenames, '') || ' ' || surname)
         else name_raw
     end as full_name,
