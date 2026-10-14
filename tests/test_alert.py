@@ -47,3 +47,24 @@ def test_folding_is_transitive_through_shared_companies():
     companies = {"O1": {"C1"}, "O2": {"C1", "C2"}, "O3": {"C2"}}
     [alert] = group_alerts(pairs, companies, threshold=70)
     assert alert.subject_ids == ["O1", "O2", "O3"]
+
+
+def test_alert_on_resigned_officers_only_is_flagged():
+    pairs = [pair("O1", "T1", 100), pair("O2", "T2", 90, "[officer]")]
+    alerts = group_alerts(pairs, {}, threshold=70, current_officers={"O2"})
+    flags = {a.subject_ids[0]: a.resigned_only for a in alerts}
+    assert flags == {"O1": True, "O2": False}
+
+
+def test_folded_alert_with_one_current_officer_is_not_resigned_only():
+    pairs = [pair("O1", "T1", 100), pair("O2", "T1", 95)]
+    [alert] = group_alerts(
+        pairs, {"O1": {"C1"}, "O2": {"C1"}}, threshold=70, current_officers={"O2"}
+    )
+    assert not alert.resigned_only
+
+
+def test_companies_are_never_resigned_only():
+    pairs = [pair("C1", "T1", 80, "ROMASHKA", "company")]
+    [alert] = group_alerts(pairs, {}, threshold=70, current_officers=set())
+    assert not alert.resigned_only

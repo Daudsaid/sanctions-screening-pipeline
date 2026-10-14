@@ -53,6 +53,9 @@ vars:
   # Volume tests guard against an empty or truncated upstream export. CI
   # builds against an empty database and sets this to false.
   min_rows_check: true
+  # Screen officers who resigned this many months before the officer
+  # snapshot, as well as current ones (0 = current officers only).
+  resigned_lookback_months: 12
   # Sanctions lists to screen against (OpenSanctions dataset names).
   sanctions_datasets: ["us_ofac_sdn", "gb_fcdo_sanctions"]
   "dbt_date:time_zone": "Europe/London"

@@ -1,5 +1,6 @@
 -- Every name of every subject and target, normalised identically.
--- Subjects: current person officers, current corporate officers, and all
+-- Subjects: person and corporate officers that are screened (current, or
+-- resigned within the lookback window; see stg_ch_officer), and all
 -- companies under current and previous names. Targets: sanctions names
 -- whose group is person or organization. Organisation names also get
 -- name_core, with legal forms (seed legal_forms) stripped from both ends.
@@ -17,13 +18,13 @@ all_names as (
     select 'subject' as side, 'person' as entity_kind, 'officer' as entity_type,
            officer_id as entity_id, full_name as name_raw
     from {{ ref('stg_ch_officer') }}
-    where officer_kind = 'person' and is_current
+    where officer_kind = 'person' and is_screened
 
     union
 
     select 'subject', 'organization', 'officer', officer_id, full_name
     from {{ ref('stg_ch_officer') }}
-    where officer_kind = 'organization' and is_current
+    where officer_kind = 'organization' and is_screened
 
     union
 

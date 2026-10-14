@@ -6,9 +6,14 @@
 -- A company filed under a person role arrives split like a person
 -- ("LIMITED, Propensions"); when the surname field ends in a legal form it
 -- becomes an organization named "Propensions LIMITED" (filed_as_person).
+-- is_screened: current, or resigned within var resigned_lookback_months of
+-- the officer snapshot (the latest fetch), so a person who resigns just
+-- after being designated is still screened. Measured from the snapshot,
+-- not today, so a rebuild gives the same answer.
 with latest as (
     select
         *,
+        max(ingested_at) over ()::date as snapshot_date,
         split_part(raw -> 'links' ->> 'self', '/', 5) as appointment_id,
         row_number() over (
             partition by split_part(raw -> 'links' ->> 'self', '/', 5)
@@ -36,6 +41,7 @@ shaped as (
         (raw ->> 'appointed_on')::date as appointed_on,
         (raw ->> 'resigned_on')::date as resigned_on,
         coalesce((raw ->> 'is_pre_1992_appointment')::boolean, false) as is_pre_1992_appointment,
+        snapshot_date,
         source_version,
         ingested_at
     from latest
@@ -102,6 +108,9 @@ select
     resigned_on,
     is_pre_1992_appointment,
     resigned_on is null as is_current,
+    resigned_on is null
+        or resigned_on >= snapshot_date
+            - make_interval(months => {{ var('resigned_lookback_months') }}) as is_screened,
     source_version,
     ingested_at
 from cleaned

@@ -8,9 +8,10 @@ potential match gets a 0-100 score with the reasons behind it, and the alert
 threshold is chosen from a measured evaluation, not by guesswork.
 
 Built as a portfolio project on a defined slice of the register: 5,406
-active fund-management companies (SIC 66300), their 9,856 current person
-officers and 275 corporate officers, screened against 23,271 sanctioned
-parties (UK and US lists merged, 3,534 of them on both).
+active fund-management companies (SIC 66300) and their officers (10,700
+people and 290 companies, current or resigned within the last 12 months),
+screened against 23,271 sanctioned parties (UK and US lists merged, 3,534
+of them on both).
 It is not a production screening system, and the gaps that would need
 closing first are listed [below](#known-limitations-and-next-steps).
 
@@ -22,7 +23,7 @@ closing first are listed [below](#known-limitations-and-next-steps).
 | **Pattern** | ELT: raw JSON landed unchanged, all cleaning in dbt, matching in Python |
 | **Sanctions lists** | UK Sanctions List (FCDO) and US OFAC SDN, via OpenSanctions, merged per party |
 | **Recall** | 93-96% of about 300 planted true matches at the chosen threshold, across five samples |
-| **Alert volume** | 30 alerts to review across about 15,500 real subjects |
+| **Alert volume** | 30 alerts to review across about 16,400 real subjects |
 | **False alerts from birth-date conflicts** | 0 on every sample |
 | **Quality gates** | 83 dbt data tests (51 with dbt-expectations), 5 dbt unit tests, 114 pytest tests, CI on every push |
 
@@ -84,7 +85,7 @@ Companies House officers API ─────┘                  │
 | [dbt](dbt/sanctions_screening_dbt/) | Turns raw JSON into typed staging views, then builds `int_name_norm`, where subjects and targets are normalised by the same macro. Merges a party listed by both the UK and the US into one target, keeping every name and birth date from both lists. Parsing repairs live here: "SURNAME, Forenames, Title" splitting, leading titles stripped as whole words only, companies filed under a person role reclassified, and non-Latin names dropped without losing any target. |
 | [Candidates](matching/block.py) | Compares every subject name with every target name of the same kind, about 410M pairs in two to three minutes on a laptop. There is no blocking, so this step cannot miss a pair. |
 | [Scoring](matching/score.py) | Matches words one to one, weighted by rarity (IDF), then adds or subtracts points for birth date (compared to the month) and nationality. Every score carries its reasons. |
-| [Alerts](matching/alert.py) | Groups scored pairs into one alert per subject, listing every target it hits. Folds together officer records for the same person at the same company. |
+| [Alerts](matching/alert.py) | Groups scored pairs into one alert per subject, listing every target it hits. Folds together officer records for the same person at the same company, and flags alerts on officers who have resigned. |
 | [Evaluation](eval/evaluate.py) | Plants synthetic matches, runs them through the production matching code, and reports recall and alert volume at each threshold. |
 
 ## How a match is scored
@@ -272,8 +273,9 @@ docs/evaluation.md          evaluation method, results and threshold choice
 - **Two lists only.** The UK and US lists cover most designations relevant
   to UK firms, but not the EU or UN lists. OpenSanctions publishes both in
   the same format, so adding one is a dataset name in ingest and dbt.
-- **Current officers only.** Resigned officers stay in staging but don't
-  alert, so an officer who resigned after being designated is missed.
+- **Resigned officers for 12 months only.** Officers who resigned within
+  the last 12 months are screened (and flagged in alerts); earlier
+  resignations are not. The window is a dbt variable.
 - **No incremental rescreening.** Every run rescreens everything. There is
   no step that screens only new designations or new appointments.
 - **No LLPs.** The slice is selected by SIC code, and LLPs don't file one,

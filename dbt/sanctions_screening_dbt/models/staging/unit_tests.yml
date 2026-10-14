@@ -129,3 +129,52 @@ unit_tests:
            '2026-09-01'::timestamp, '2026-10-01'::timestamptz)
         ) as v(target_id, datasets, entity_type, entity_group, primary_name, aliases,
                birth_dates, countries, program_ids, last_change, ingested_at)
+
+  - name: officer_resigned_lookback
+    description: >
+      Current officers and officers who resigned within the lookback window
+      (12 months before the officer snapshot, the latest fetch) are screened;
+      earlier resignations are not.
+    model: stg_ch_officer
+    overrides:
+      vars:
+        resigned_lookback_months: 12
+    given:
+      - input: source('raw', 'raw_ch_officer')
+        format: sql
+        rows: |
+          select id, '00000001'::text as company_number, 'v1'::text as source_version,
+                 ingested_at::timestamptz, raw::jsonb as raw
+          from (values
+            (1, '2026-10-05', '{"name": "SMITH, Current", "officer_role": "director",
+              "links": {"self": "/company/00000001/appointments/A1", "officer": {"appointments": "/officers/O1/appointments"}}}'),
+            (2, '2026-10-01', '{"name": "SMITH, Recent", "officer_role": "director", "resigned_on": "2025-11-01",
+              "links": {"self": "/company/00000001/appointments/A2", "officer": {"appointments": "/officers/O2/appointments"}}}'),
+            (3, '2026-10-01', '{"name": "SMITH, Old", "officer_role": "director", "resigned_on": "2025-09-30",
+              "links": {"self": "/company/00000001/appointments/A3", "officer": {"appointments": "/officers/O3/appointments"}}}')
+          ) as v(id, ingested_at, raw)
+    expect:
+      rows:
+        - {appointment_id: A1, is_current: true, is_screened: true}
+        - {appointment_id: A2, is_current: false, is_screened: true}
+        - {appointment_id: A3, is_current: false, is_screened: false}
+
+  - name: officer_lookback_zero_screens_current_only
+    description: With resigned_lookback_months 0, only current officers are screened.
+    model: stg_ch_officer
+    overrides:
+      vars:
+        resigned_lookback_months: 0
+    given:
+      - input: source('raw', 'raw_ch_officer')
+        format: sql
+        rows: |
+          select id, '00000001'::text as company_number, 'v1'::text as source_version,
+                 '2026-10-05'::timestamptz as ingested_at, raw::jsonb as raw
+          from (values
+            (1, '{"name": "SMITH, Recent", "officer_role": "director", "resigned_on": "2026-10-01",
+              "links": {"self": "/company/00000001/appointments/A1", "officer": {"appointments": "/officers/O1/appointments"}}}')
+          ) as v(id, raw)
+    expect:
+      rows:
+        - {appointment_id: A1, is_current: false, is_screened: false}

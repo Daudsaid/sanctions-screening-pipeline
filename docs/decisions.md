@@ -61,11 +61,11 @@ iCloud. Moving the project to ~/dev fixed it: dbt debug went from over
 - 21,613 distinct officer IDs across 28,098 appointments (20,772 of them
   person IDs), so screening is per officer ID. This is an upper bound on
   people: Companies House does not always merge one person's records. After
-  the current-officers filter below, 9,856 person and 275 corporate officer
-  IDs remain as subjects.
-- 56% of appointments have ended. v1 alerts on current officers only; resigned
-  officers stay in staging. Known gap: an officer who resigned after
-  designation. Planned as a v2 rule.
+  the screening filter below, 10,700 person and 290 corporate officer IDs
+  remain as subjects (9,856 and 275 of them current).
+- 56% of appointments have ended. v1 screened current officers only, which
+  missed an officer who resigned after designation. Officers who resigned
+  within 12 months are now screened too; see "Resigned officers" below.
 - Company suffixes stripped: LIMITED, LTD, LTD., PLC, CIC, COMMUNITY INTEREST
   COMPANY. Private unlimited companies and exempt guarantee companies have no
   suffix by law. Words like COMPANY (as in "& COMPANY"), INVESTMENTS and
@@ -135,8 +135,8 @@ weighting. If stripping would leave nothing, the full name is kept.
 
 Of 47,641 in-scope sanctions names, 5,413 are non-Latin and drop out (no
 target loses every name), and 2,201 merge into another spelling of the same
-name, leaving 40,027. Subjects: 9,856 person officers, 275 corporate
-officers, 5,406 companies (6,518 names including previous names).
+name, leaving 40,027. Subjects: 10,700 person officers, 290 corporate
+officers (current or resigned within 12 months), 5,406 companies (6,518 names including previous names).
 
 Mixed-script names are dropped: 320 OFAC names are mostly Cyrillic with a
 few stray Latin letters (a Belarusian i, a Latin C or O, or OOO before a
@@ -195,7 +195,7 @@ with the reasons stored next to it, so every alert can be explained.
 - Nationality (persons): +5 overlap, -5 both known and no overlap. Kept small
   because OFAC countries mix nationality and residence.
 
-Weights are hand-set. On the real data, 4,041 pairs are scored; 6 person and
+Weights are hand-set. On the real data, 4,099 pairs are scored; 6 person and
 14 organisation pairs reach 80 (4 and 12 with OFAC alone). None look like true matches: the top is
 exact name collisions ([company], [officer], where one officer ID has a
 birth date five months from the target's and the other has none) and
@@ -427,4 +427,25 @@ Five alerts come from targets only on the UK list:
 
 [company] fell from 70.0 to just under, because the extra UK
 names shift word weights. The threshold stays at 70.
+
+## Resigned officers
+
+v1 screened current officers only, so a person who resigned shortly after
+being designated (or shortly before a check) dropped out of screening, the
+gap a compliance reviewer would question first. stg_ch_officer now has
+is_screened: current, or resigned within var resigned_lookback_months
+(default 12) of the officer snapshot. The window is measured from the
+latest officer fetch, not today's date, so rebuilding later gives the same
+answer. Set it to 0 for current officers only.
+
+Effect at 12 months: 844 more person officer IDs and 15 more corporate
+officer IDs are screened (10,700 and 290; 859 people had no current
+appointment anywhere in the slice). 58 more pairs are scored, but none
+reaches the threshold: the best newly screened officer scores 56
+([officer] against AHMAD ISMAIL). Alerts stay at 30. The
+gap is closed without adding review work on this data.
+
+match_alert has a resigned_only flag for alerts whose officers hold no
+current appointment, so a reviewer knows to compare the resignation date
+with the designation date. None is set on the current data.
 

@@ -13,6 +13,11 @@ subject, not a pair, so pairs at or above THRESHOLD are grouped:
   a name, at different companies, stay separate: merging those would be
   entity resolution, and a wrong merge is worse than a duplicate alert.
 
+Officers who resigned within the lookback window (stg_ch_officer.is_screened)
+are screened too. An alert whose officers hold no current appointment is
+marked resigned_only, so a reviewer knows to check the resignation date
+against the designation date.
+
 Scores are unchanged; this only changes how alerts are counted and shown.
 """
 
@@ -42,6 +47,7 @@ class Alert:
     top_score: float
     targets: list[tuple[str, float]]  # (target_id, best score), best first
     top_reasons: str
+    resigned_only: bool = False
 
     @property
     def alert_id(self) -> str:
@@ -52,8 +58,14 @@ def group_alerts(
     pairs: list[Pair],
     officer_companies: dict[str, set[str]],
     threshold: float = THRESHOLD,
+    current_officers: set[str] | None = None,
 ) -> list[Alert]:
-    """Group alerting pairs into one alert per subject. Pure function."""
+    """Group alerting pairs into one alert per subject. Pure function.
+
+    officer_companies: companies of each screened officer (current or
+    recently resigned). current_officers: officers with a current
+    appointment; None treats every officer as current.
+    """
     hits = [p for p in pairs if p.score >= threshold]
 
     # Union-find over subjects: fold officers with the same matched name and
@@ -99,6 +111,11 @@ def group_alerts(
                 top_score=top.score,
                 targets=sorted(best_per_target.items(), key=lambda t: (-t[1], t[0])),
                 top_reasons=top.reasons,
+                resigned_only=(
+                    current_officers is not None
+                    and top.subject_type == "officer"
+                    and not any(p.subject_id in current_officers for p in members)
+                ),
             )
         )
     return sorted(alerts, key=lambda a: (-a.top_score, a.alert_id))
@@ -118,12 +135,15 @@ def run() -> None:
     if not pairs:
         raise SystemExit("match_score is empty: run `make candidates score` first")
     officer_companies: dict[str, set[str]] = defaultdict(set)
-    for officer_id, company in conn.execute(
-        "select officer_id, company_number from stg_ch_officer where is_current"
+    current_officers: set[str] = set()
+    for officer_id, company, is_current in conn.execute(
+        "select officer_id, company_number, is_current from stg_ch_officer where is_screened"
     ):
         officer_companies[officer_id].add(company)
+        if is_current:
+            current_officers.add(officer_id)
 
-    alerts = group_alerts(pairs, officer_companies)
+    alerts = group_alerts(pairs, officer_companies, current_officers=current_officers)
 
     conn.execute("drop table if exists match_alert")
     conn.execute(
@@ -139,6 +159,7 @@ def run() -> None:
             target_ids     text[] not null,
             target_scores  real[] not null,
             top_reasons    text not null,
+            resigned_only  boolean not null,
             created_at     timestamptz not null default now()
         )
         """
@@ -146,8 +167,8 @@ def run() -> None:
     with conn.cursor() as cur:
         cur.executemany(
             "insert into match_alert (alert_id, subject_type, entity_kind, subject_ids, "
-            "subject_name, top_score, n_targets, target_ids, target_scores, top_reasons) "
-            "values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+            "subject_name, top_score, n_targets, target_ids, target_scores, top_reasons, "
+            "resigned_only) values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
             [
                 (
                     a.alert_id,
@@ -160,13 +181,18 @@ def run() -> None:
                     [t for t, _ in a.targets],
                     [s for _, s in a.targets],
                     a.top_reasons,
+                    a.resigned_only,
                 )
                 for a in alerts
             ],
         )
     conn.commit()
     n_pairs = sum(p.score >= THRESHOLD for p in pairs)
-    print(f"{len(alerts)} alerts from {n_pairs} pairs at threshold {THRESHOLD}")
+    resigned = sum(a.resigned_only for a in alerts)
+    print(
+        f"{len(alerts)} alerts ({resigned} resigned officers only) "
+        f"from {n_pairs} pairs at threshold {THRESHOLD}"
+    )
 
 
 if __name__ == "__main__":
