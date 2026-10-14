@@ -1,15 +1,11 @@
-Welcome to your new dbt project!
+# sanctions_screening_dbt
 
-### Using the starter project
+The dbt project for the sanctions screening pipeline: staging models over the
+raw JSON landing tables, `int_name_norm` (shared name normalisation for
+subjects and sanctions targets), seeds for legal forms and nationality codes,
+and the data quality tests.
 
-Try running the following commands:
-- dbt run
-- dbt test
-
-
-### Resources:
-- Learn more about dbt [in the docs](https://docs.getdbt.com/docs/introduction)
-- Check out [Discourse](https://discourse.getdbt.com/) for commonly asked questions and answers
-- Join the [chat](https://community.getdbt.com/) on Slack for live discussions and support
-- Find [dbt events](https://events.getdbt.com) near you
-- Check out [the blog](https://blog.getdbt.com/) for the latest news on dbt's development and best practices
+Run it from the repository root with `make dbt-build`, which installs the
+packages (`dbt deps`) and builds everything with `profiles.yml` from this
+folder. See the [main README](../../README.md) and
+[docs/decisions.md](../../docs/decisions.md) for the design.

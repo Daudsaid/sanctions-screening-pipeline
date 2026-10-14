@@ -1,181 +1,276 @@
-# Sanctions screening pipeline
+# Sanctions Screening Pipeline
 
-Screens UK companies and their officers from Companies House against the US
-OFAC sanctions list (SDN), and gives every potential match a 0-100 score
-with readable reasons.
+[![CI](https://github.com/Daudsaid/sanctions-screening-pipeline/actions/workflows/ci.yml/badge.svg)](https://github.com/Daudsaid/sanctions-screening-pipeline/actions/workflows/ci.yml)
 
-It is a portfolio project, built on a slice of the register (about 5,400
-active fund management companies, SIC 66300, and their 10,100 current
-officers), not a production screening system. The design decisions, and the
-data problems behind them, are written up in
-[docs/decisions.md](docs/decisions.md).
+An end-to-end pipeline that screens UK companies and their officers from
+Companies House against the US OFAC sanctions list. Every potential match
+gets a 0-100 score with the reasons behind it, and the alert threshold is
+chosen from a measured evaluation, not by guesswork.
 
-## Why screening is hard
+Built as a portfolio project on a defined slice of the register: 5,406
+active fund-management companies (SIC 66300), their 9,856 current person
+officers and 275 corporate officers, screened against 20,346 OFAC targets.
+It is not a production screening system, and the gaps that would need
+closing first are listed [below](#known-limitations-and-next-steps).
 
-Name matching sounds simple and isn't:
+## At a glance
 
-- **Names are written differently.** OFAC writes "Forenames SURNAME",
-  Companies House "SURNAME, Forenames". Middle names come and go, and
-  people misspell names.
+| Area | Detail |
+| --- | --- |
+| **Stack** | Python 3.12, PostgreSQL 16, dbt 1.12 + dbt-expectations, rapidfuzz, uv, Docker, GitHub Actions |
+| **Pattern** | ELT: raw JSON landed unchanged, all cleaning in dbt, matching in Python |
+| **Recall** | 97% of 300 planted true matches at the chosen threshold |
+| **Alert volume** | 26 alerts to review across about 15,500 real subjects |
+| **False alerts from birth-date conflicts** | 0 of 100 |
+| **Quality gates** | 72 dbt data tests, 3 dbt unit tests, 112 pytest tests, CI on every push |
+
+Every design choice, including the ones that turned out wrong, is written
+up in [docs/decisions.md](docs/decisions.md). The evaluation method and full
+results are in [docs/evaluation.md](docs/evaluation.md).
+
+## Why sanctions screening is hard
+
+Matching names sounds simple. In practice:
+
+- **The same name is written many ways.** OFAC writes "Forenames SURNAME",
+  Companies House "SURNAME, Forenames". Middle names come and go, and typos
+  are common.
 - **Transliteration.** One Arabic or Russian name has several legitimate
-  Latin spellings: MOHAMMED, MUHAMMAD, MOHAMED; SERGEY, SERGEI. About 18%
-  of OFAC aliases aren't in Latin script at all.
-- **Common words.** Most company names share words like ASSET, MANAGEMENT,
-  CAPITAL or GROUP with some sanctioned entity, and many people share first
-  names. A match on MOHAMMED or MANAGEMENT means little; a match on a rare
-  word means a lot.
-- **Legal forms.** ROMASHKA OOO, ROMASHKA LIMITED and AKTSIONERNOE
-  OBSHCHESTVO ROMASHKA are the same name once the legal form is removed.
-- **Few true matches.** Almost every candidate is a false positive, so you
-  can't measure how many real matches are missed by looking at the data
-  alone.
+  Latin spellings: MOHAMMED, MUHAMMAD, MOHAMED; SERGEY, SERGEI. About 18% of
+  OFAC aliases are not in Latin script at all.
+- **Common words carry little signal.** Most fund managers share words like
+  CAPITAL, MANAGEMENT or GROUP with some sanctioned entity, and many people
+  share a first name. A match on a rare word means far more than a match on
+  MOHAMMED or MANAGEMENT.
+- **Legal forms hide identical names.** ROMASHKA OOO, ROMASHKA LIMITED and
+  AKTSIONERNOE OBSHCHESTVO ROMASHKA are the same name once the legal form is
+  removed.
+- **True matches are rare.** Almost every candidate is a false positive, so
+  recall cannot be measured from the real data alone.
 
 ## Architecture
 
-ELT: raw data is landed unchanged, and all cleaning happens in the database.
-
 ```text
 OpenSanctions (us_ofac_sdn) ─┐
-Companies House bulk file ───┼─> ingest/ ─> raw tables (Postgres, JSONB)
+Companies House bulk file ───┼─> ingest/ ─> raw tables (Postgres, JSONB, content-hashed)
 Companies House officers API ┘                       │
                                                      v
-                          dbt staging (typed, filtered, one row per entity)
-                                                     │
-                          dbt intermediate (int_name_norm: normalised names,
-                          legal forms stripped, nationality mapped to ISO)
+                          dbt staging        typed, filtered, one row per entity
+                                                     │   + data quality tests
+                          dbt intermediate   int_name_norm: one normalisation for
+                                             both sides, legal forms stripped,
+                                             nationality mapped to ISO codes
                                                      │
                           matching/block.py  ─> match_candidate
-                          (every name vs every name, rapidfuzz)
+                                             every name vs every name (rapidfuzz)
                                                      │
                           matching/score.py  ─> match_score
-                          (rarity-weighted name score + birth date
-                           + nationality, with reasons)
+                                             rarity-weighted name score
+                                             + birth date + nationality, with reasons
                                                      │
                           matching/alert.py  ─> match_alert
-                          (one row per subject at score >= 70)
+                                             one alert per subject at score >= 70
                                                      │
                           eval/evaluate.py   ─> docs/evaluation.md
-                          (planted matches, recall vs alert volume)
+                                             planted matches: recall vs alert volume
 ```
 
-- **Ingest** ([ingest/](ingest/)) downloads and caches source files under
-  `data/raw/`, and loads each record as JSON with a content hash, so reruns
-  only add records that actually changed.
-- **dbt** ([dbt/sanctions_screening_dbt/](dbt/sanctions_screening_dbt/))
-  turns raw JSON into typed staging views and builds `int_name_norm`, where
-  subjects and targets are normalised by the same macro. Data and unit tests
-  cover the parsing rules.
-- **Candidates** ([matching/block.py](matching/block.py)) compare every
-  subject name with every target name of the same kind (about 330M pairs,
-  two minutes on a laptop). No blocking, so this step can't miss a pair.
-- **Scoring** ([matching/score.py](matching/score.py)) matches words one to
-  one, weighted by rarity, then adds or subtracts for birth date (compared
-  to the month) and for nationality. Every score comes with its reasons, for
-  example `name 96: [officer] / ALI MOHAMMED; +5 birth month [birth month] within
-  1 month of 1968-01; -5 nationality differs (gb vs pk, sa)`.
-- **Alerts** ([matching/alert.py](matching/alert.py)) turn pairs scoring 70
-  or more into one alert per subject, listing every target it hits, and fold
-  together officers with the same name at the same company (Companies House
-  sometimes files one person twice).
+| Stage | What it does |
+| --- | --- |
+| [Ingest](ingest/) | Downloads and caches the source files, then loads each record unchanged as JSON with a content hash. Volatile fields such as `last_seen` are excluded from the hash, so a rerun against an unchanged export loads 0 rows. |
+| [dbt](dbt/sanctions_screening_dbt/) | Turns raw JSON into typed staging views, then builds `int_name_norm`, where subjects and targets are normalised by the same macro. Parsing repairs live here: "SURNAME, Forenames, Title" splitting, leading titles stripped as whole words only, companies filed under a person role reclassified, and non-Latin names dropped without losing any target. |
+| [Candidates](matching/block.py) | Compares every subject name with every target name of the same kind, about 330M pairs in two minutes on a laptop. There is no blocking, so this step cannot miss a pair. |
+| [Scoring](matching/score.py) | Matches words one to one, weighted by rarity (IDF), then adds or subtracts points for birth date (compared to the month) and nationality. Every score carries its reasons. |
+| [Alerts](matching/alert.py) | Groups scored pairs into one alert per subject, listing every target it hits. Folds together officer records for the same person at the same company. |
+| [Evaluation](eval/evaluate.py) | Plants synthetic matches, runs them through the production matching code, and reports recall and alert volume at each threshold. |
 
-## Data quality
+## How a match is scored
 
-The data quality checks from profiling run as dbt tests on every
-`dbt build`: built-in tests, [dbt-expectations](https://github.com/metaplane/dbt-expectations)
-for regex, range and row-count checks, and singular SQL tests for checks
-across models. A check is an error if a failure would make screening wrong:
-fewer than 15,000 sanctions targets (an empty or truncated export), a
-malformed birth date or company number, a date in the future, a name that
-no longer normalises cleanly, or a sanctions target left with no name. An
-error stops the build before matching runs. Known source quirks, such as
-2 officers who resigned before they were appointed or 645 people split
-across several officer IDs, are warnings, with the expected count in each
-test's description. The full list is in
-[docs/decisions.md](docs/decisions.md#data-quality-checks-dbt-tests--dbt-expectations).
+A subject-target pair is scored on its best pair of names:
+
+- **Name (0-100).** Words are matched one to one, allowing spelling variants
+  (MOHAMED / MOHAMMED). Each word is weighted by how rare it is, so sharing
+  ROMASHKA counts far more than sharing MANAGEMENT. Words of four letters or
+  fewer must match exactly, because one letter changes too much of a short
+  word (IFC is not IFDC).
+- **Birth date (persons).** +15 for the same year and month, +10 for the
+  same year when the target gives only a year, +5 within eleven months, and
+  -40 when no target date is within a year. A clear
+  conflict is strong evidence of a different person. Companies House gives
+  only year and month, so that is the finest comparison possible.
+- **Nationality (persons).** +5 or -5. Kept small, because OFAC's
+  "countries" mixes nationality, citizenship and residence.
+
+Each alert explains itself. For example:
+
+```text
+96.4  [officer]  vs  Ali Muhammad Abu Turab (alias ALI MOHAMMED)
+      name 96: [officer] / ALI MOHAMMED;
+      +5 birth month [birth month] within 1 month of 1968-01;
+      -5 nationality differs (gb vs pk, sa)
+```
 
 ## Evaluation
 
-True matches are too rare in this data to measure recall, so the evaluation
-plants 400 synthetic subjects built from real OFAC names, each with one
-realistic change (typo, word order, middle name, transliteration, added UK
-legal suffix or GROUP). Half of the person plants have a conflicting birth
-date and should not alert. Real Companies House subjects are counted as
-negatives. Full method and tables: [docs/evaluation.md](docs/evaluation.md).
+Natural true matches are too rare in this slice to measure recall, so the
+evaluation plants them:
 
-At the chosen threshold of 70:
+- **Plants.** A seeded sample of 200 OFAC persons and 200 organisations
+  each get one fake subject with one realistic change: a typo, swapped word
+  order, a middle name dropped or added, a transliteration variant, or an
+  added UK legal suffix or "UK" / "GROUP".
+- **Negatives.** Half the person plants get a birth date at least two years
+  from the target's. Every real Companies House subject is also treated as a
+  negative.
+- **Same code as production.** Plants go through the production candidate
+  generation and scoring, with the production word weights. Nothing was
+  tuned to the plants.
+
+Results at the chosen threshold of 70:
 
 | Measure | Result |
 | --- | --- |
-| Recall on 300 true plants | 97% |
-| Persons (with matching birth date / name only) | 100% / 96% |
-| Organisations | 96% |
-| Organisations with a typo | 84% |
-| Alerting pairs on real subjects (about 15,500) | 33 (5 person, 28 organisation) |
-| Alerts to review, grouped per subject | 26 |
-| Alerts on birth-date-conflict plants | 0 of 100 |
+| Recall, all 300 true plants | 97% |
+| Recall, persons (with matching birth date / on name alone) | 100% / 96% |
+| Recall, organisations | 96% |
+| Recall, organisation names with a typo (weakest change type) | 84% |
+| Pairs scoring 70+ on real subjects | 33 (5 person, 28 organisation) |
+| Alerts to review after grouping per subject | 26 |
+| Birth-date-conflict plants alerting | 0 of 100 |
 
-These are measured on synthetic, single-change plants, so they are an upper
-bound on real-world performance, not an estimate of it. The weak spots
-(typos in short words, a one-word company name with GROUP added) are
-explained in the evaluation doc and have not been tuned away.
+**Why 70.** Raising the threshold to 80 would roughly halve the alerting
+pairs (16), but it loses six true plants and drops name-only person recall
+from 96% to 86%. A missed designated party is a regulatory breach, while an
+extra alert costs minutes of analyst time. Going below 65 lets birth-date
+conflicts through for almost no gain in recall.
 
-## Running it
+**What the evaluation shows doesn't work yet.**
 
-Requirements: Docker, [uv](https://docs.astral.sh/uv/), make, and a free
+- **Organisation typos in short words.** The word-level similarity counts a
+  substituted letter as two edits, so words under seven letters cannot
+  absorb a typo.
+- **A one-word company name with GROUP added** (TRIALKOM / TRIALKOM GROUP)
+  never becomes a candidate.
+
+Both are explained in [docs/evaluation.md](docs/evaluation.md) and left
+untuned on purpose. The figures come from synthetic, single-change plants,
+so read them as an upper bound on real-world performance, not an estimate
+of it.
+
+## Data quality
+
+Every check from the initial data profiling is now a permanent test that
+runs on each `dbt build`. These use built-in dbt tests,
+[dbt-expectations](https://github.com/metaplane/dbt-expectations) for
+regex, range and row-count checks, and singular SQL tests for checks that
+span models.
+
+- **Errors (48 tests)** block the build before matching runs. They cover
+  anything that would make screening wrong:
+  - fewer than 15,000 sanctions targets, which guards against an empty or
+    truncated upstream export
+  - a malformed birth date or company number
+  - a date in the future
+  - a name that no longer normalises cleanly
+  - a sanctions target left with no screenable name
+- **Warnings (24 tests)** track known source quirks that staging already
+  handles, such as officers who resigned before they were appointed, or one
+  person filed under several officer IDs. Each records its expected count,
+  so a change shows up in every build.
+
+The full list of warnings and their counts is in
+[docs/decisions.md](docs/decisions.md#data-quality-checks-dbt-tests--dbt-expectations).
+
+## Getting started
+
+**Requirements:** Docker, [uv](https://docs.astral.sh/uv/), make, and a free
 [Companies House API key](https://developer.company-information.service.gov.uk/)
 for the officers step.
 
 ```sh
-cp .env.example .env               # add COMPANIES_HOUSE_API_KEY
+git clone https://github.com/Daudsaid/sanctions-screening-pipeline.git
+cd sanctions-screening-pipeline
+cp .env.example .env            # add COMPANIES_HOUSE_API_KEY
 uv sync
-make up                            # Postgres 16; creates the raw tables on first start
-make schema                        # (re)apply schema/001_raw.sql, safe to rerun
+make up                         # Postgres 16; creates the raw tables on first start
 ```
 
-Load the sources. The Companies House bulk file ("BasicCompanyDataAsOneFile",
-from the [free data product page](https://download.companieshouse.gov.uk/en_output.html))
-has to be downloaded and unzipped into `data/raw/` by hand.
+**Load the sources.** Download the Companies House bulk file
+("BasicCompanyDataAsOneFile") from the
+[free data product page](https://download.companieshouse.gov.uk/en_output.html)
+and unzip it into `data/raw/`, then run:
 
 ```sh
 uv run --env-file .env python -m ingest.opensanctions
 uv run --env-file .env python -m ingest.companies_house_bulk --sic 66300
-uv run --env-file .env python -m ingest.companies_house_officers   # about an hour, rate-limited, resumable
+uv run --env-file .env python -m ingest.companies_house_officers   # ~1 hour, rate-limited, resumable
 ```
 
-Transform, match and evaluate:
+**Transform, match and evaluate:**
 
 ```sh
-make dbt-build      # dbt deps, then seeds, models and data quality tests
-make candidates     # match_candidate
-make score          # match_score
-make alerts         # match_alert: one row per subject to review
-make eval           # rewrites the tables in docs/evaluation.md
+make dbt-build      # dbt deps, seeds, models and data quality tests
+make candidates     # -> match_candidate
+make score          # -> match_score
+make alerts         # -> match_alert, one row per subject to review
+make eval           # regenerates the results tables in docs/evaluation.md
 ```
 
-Development checks: `make lint`, `make test`, `make dbt-unit`, or all three
-with `make check`. CI runs lint, pytest, and `dbt build` against an empty
-Postgres, with the row-count checks switched off
-(`--vars '{min_rows_check: false}'`).
+## Testing and CI
 
-## Known gaps
+```sh
+make check          # workflow-file check, ruff, pytest, dbt unit tests
+```
+
+GitHub Actions runs on every push and pull request:
+
+- validates the workflow files
+- lints with ruff
+- runs pytest
+- builds the full dbt project against a fresh Postgres 16 service
+
+The CI database is empty, so the row-count checks are switched off there
+with a dbt variable (`min_rows_check`).
+
+## Project layout
+
+```text
+ingest/                     extract and load: OpenSanctions, Companies House bulk file and API
+schema/001_raw.sql          raw landing tables
+dbt/sanctions_screening_dbt staging and intermediate models, seeds, data quality tests
+matching/                   candidate generation, scoring, alert grouping
+eval/                       planted-match evaluation
+tests/                      pytest suite (no database needed)
+scripts/                    workflow-file check used by make lint and CI
+docs/decisions.md           design decisions and data findings
+docs/evaluation.md          evaluation method, results and threshold choice
+```
+
+## Known limitations and next steps
 
 - **UK Sanctions List not yet included.** OFSI's Consolidated List closed in
   January 2026, and the FCDO's UK Sanctions List (OpenSanctions
   `gb_fcdo_sanctions`) is now the UK source. A pipeline screening UK
   companies should screen against it. It is the next dataset to add, with
-  deduplication of targets listed by both the UK and the US.
+  deduplication of targets designated by both the UK and the US.
 - **Current officers only.** Resigned officers stay in staging but don't
   alert, so an officer who resigned after being designated is missed.
 - **No incremental rescreening.** Every run rescreens everything. There is
-  no "what changed since the last run" step for new designations or new
-  appointments.
+  no step that screens only new designations or new appointments.
 - **No LLPs.** The slice is selected by SIC code, and LLPs don't file one,
-  so fund management LLPs are missing.
+  so fund-management LLPs are missing.
 - **No blocking.** Comparing every pair works at this size but not for the
-  whole register (about 5M companies). See docs/decisions.md for the plan.
+  whole register (about 5M companies). [docs/decisions.md](docs/decisions.md)
+  sets out the blocking plan and how to measure the recall it costs.
 - **Hand-set weights.** Scoring weights were set by hand and checked against
-  the evaluation, not learned. Duplicate Companies House records for the same
-  person are not merged, so one person can alert twice.
+  the evaluation, not learned.
+- **Duplicate people.** Companies House sometimes holds one person under
+  several officer IDs. They are merged only within a company, so one person
+  can still raise more than one alert.
+- **Typo tolerance in short words.** A word-level edit distance that counts
+  a substitution as one edit would likely lift organisation typo recall. Any
+  such change should be measured against both recall and the alert volume on
+  real subjects.
 
 ## Contact
 
