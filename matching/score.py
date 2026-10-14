@@ -155,6 +155,32 @@ def score_pair(
     return result
 
 
+def load_weights(conn) -> dict[str, dict[str, float]]:
+    """Word weights per entity kind, over every subject and target name."""
+    from collections import defaultdict
+
+    weights = {}
+    for kind in ("person", "organization"):
+        names = defaultdict(list)
+        for side, e_id, core in conn.execute(
+            "select side, entity_id, name_core from int_name_norm where entity_kind = %s",
+            (kind,),
+        ):
+            names[(side, e_id)].append(core)
+        weights[kind] = word_weights(names)
+    return weights
+
+
+def load_targets(conn) -> dict[str, tuple[list[str], set[str]]]:
+    """Birth dates and countries per sanctions target."""
+    return {
+        t: (dates, set(countries))
+        for t, dates, countries in conn.execute(
+            "select target_id, birth_dates, countries from stg_sanctions_target"
+        )
+    }
+
+
 def run() -> None:
     from collections import defaultdict
 
@@ -192,16 +218,7 @@ def run() -> None:
     for kind, s_type, s_id, s_name, t_id, t_name in rows:
         pairs[(kind, s_type, s_id, t_id)].append((s_name, t_name))
 
-    weights = {}
-    for kind in ("person", "organization"):
-        names = defaultdict(list)
-        for side, e_id, core in conn.execute(
-            "select side, entity_id, name_core from int_name_norm where entity_kind = %s",
-            (kind,),
-        ):
-            names[(side, e_id)].append(core)
-        weights[kind] = word_weights(names)
-
+    weights = load_weights(conn)
     dob = {
         o: (y, m)
         for o, y, m in conn.execute(
@@ -215,12 +232,7 @@ def run() -> None:
         "join stg_ch_officer o using (appointment_id) where n.iso2 is not null"
     ):
         nat[o].add(iso)
-    targets = {
-        t: (dates, set(countries))
-        for t, dates, countries in conn.execute(
-            "select target_id, birth_dates, countries from stg_sanctions_target"
-        )
-    }
+    targets = load_targets(conn)
 
     out = []
     for (kind, s_type, s_id, t_id), name_pairs in pairs.items():

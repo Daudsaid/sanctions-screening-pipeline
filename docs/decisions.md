@@ -197,3 +197,26 @@ exact name collisions ([company], [officer], where one officer ID has a
 birth date five months from the target's and the other has none) and
 spelling variants ([company] / INPESCA). The alert threshold, and whether the
 weights hold up, are for the evaluation set to decide.
+
+## Evaluation (eval/evaluate.py, docs/evaluation.md)
+
+Recall is measured on planted matches: 200 OFAC person and 200 organisation
+targets (seeded sample, Latin-script primary names), each given one fake
+subject with one change (typo, word order, middle name dropped or added,
+transliteration, UK legal suffix, UK / GROUP). Half the person plants have a
+conflicting birth year and are negatives. Real Companies House subjects are
+treated as negatives. Plants go through the production candidate_pairs and
+score_pair with the production word weights.
+
+Alert threshold: 70. At 70, recall is 97% of 300 true plants (persons 100%,
+96% on name alone, organisations 96%), with 33 alerts on real subjects
+(5 person, 28 organisation) and no birth-date-conflict plant alerting. At 80
+the real alerts fall to 15 but recall drops to 95%, and to 86% for persons
+scored on name alone. A conflict caps a perfect name at 60 (65 with a
+nationality match), so 70 keeps a margin above that.
+
+Weak spots, left untuned: organisation typos (84% at 70), because fuzz.ratio
+counts a substituted letter as two edits, so words under seven letters can't
+absorb one, and the misspelt word gets the top rarity weight; and a one-word
+target with UK or GROUP added (TRIALKOM / TRIALKOM GROUP), which the
+two-word guard keeps out of candidates entirely.
