@@ -155,7 +155,6 @@ Postgres.
 
 Daud Abdi
 
-- Email: [daudsaidabdi@gmail.com](mailto:daudsaidabdi@gmail.com)
 - GitHub: [github.com/Daudsaid](https://github.com/Daudsaid)
 - LinkedIn: [linkedin.com/in/daudabdi0506](https://www.linkedin.com/in/daudabdi0506)
 - Website: [daudabdi.com](https://daudabdi.com)
