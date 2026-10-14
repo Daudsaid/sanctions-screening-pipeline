@@ -1,16 +1,16 @@
 """Evaluation: how many planted true matches does scoring catch, at what cost?
 
 Natural true matches are too rare in this slice to measure recall, so we
-plant synthetic ones. A seeded sample of OFAC person and organisation targets
-(primary name in Latin script) each gets one fake subject whose name carries
-one realistic change:
+plant synthetic ones. A seeded sample of sanctioned persons and organisations
+from all screened lists (primary name in Latin script) each gets one fake
+subject whose name carries one realistic change:
 
   persons        typo, word order, middle name dropped, middle name added,
                  transliteration variant (MOHAMMED / MUHAMMAD)
   organisations  typo, word order, UK legal suffix added (LIMITED, LTD, PLC),
                  UK or GROUP added before a legal suffix
 
-Person plants also get a birth year and month. Half agree with the target
+Person plants also get a birth year and month. About half agree with the target
 (true matches); half are at least two years from every target date
 (negatives, since a clear birth-date conflict means a different person).
 Plants carry no nationality, so nationality is neutral for them.
@@ -25,6 +25,8 @@ Writes the results tables into docs/evaluation.md between the markers below,
 leaving the hand-written text around them alone.
 """
 
+import argparse
+import hashlib
 import random
 from collections import defaultdict
 from dataclasses import dataclass
@@ -194,19 +196,28 @@ class Plant:
     core: str = ""  # plant name as matching sees it
 
 
+def sample_key(seed: int, target_id: str) -> str:
+    return hashlib.sha256(f"{seed}:{target_id}".encode()).hexdigest()
+
+
 def make_plants(
     kind: str,
     sources: list[tuple[str, str, list[str]]],
-    rng: random.Random,
+    seed: int = SEED,
     n: int = PLANTS_PER_KIND,
 ) -> list[Plant]:
     """Spread n plants evenly over the change types, one target each.
 
-    sources: (target_id, normalised primary name, birth dates), sorted.
+    sources: (target_id, normalised primary name, birth dates).
+
+    Targets are taken in an order fixed by a hash of seed and target id, and
+    each plant draws from its own generator seeded the same way. A plant
+    therefore depends only on its target, so a data refresh that adds or
+    removes a few targets changes only those plants instead of reshuffling
+    the whole sample.
     """
     changes = PERSON_CHANGES if kind == "person" else ORG_CHANGES
-    pool = list(sources)
-    rng.shuffle(pool)
+    pool = sorted(sources, key=lambda src: sample_key(seed, src[0]))
     used: set[str] = set()
     plants = []
     for c_idx, change in enumerate(changes):
@@ -217,6 +228,7 @@ def make_plants(
                 break
             if target_id in used:
                 continue
+            rng = random.Random(sample_key(seed, f"{change}:{target_id}"))
             raw = apply_change(change, name, kind, rng)
             if raw is None or raw == name:
                 continue
@@ -232,7 +244,8 @@ def make_plants(
                 core=raw,
             )
             if kind == "person":
-                plant.is_true = made % 2 == 0
+                # About half agree on birth date; decided per target, so stable.
+                plant.is_true = int(sample_key(seed, f"dob:{target_id}"), 16) % 2 == 0
                 plant.dob = plant_dob(dates, plant.is_true, rng)
             plants.append(plant)
             made += 1
@@ -336,7 +349,7 @@ def render(summary: dict) -> str:
         RESULTS_START,
         "",
         (
-            f"Seed {SEED}. {summary['n_true']} true plants ({summary['n_true_person']} person, "
+            f"Seed {summary['seed']}. {summary['n_true']} true plants ({summary['n_true_person']} person, "
             f"{summary['n_true_org']} organisation), {summary['n_conflict']} person plants "
             f"with a conflicting birth date, {summary['n_real']} scored real subject-target "
             "pairs."
@@ -437,6 +450,11 @@ def strip_legal_forms(conn, names: list[str]) -> list[str]:
 def run() -> None:
     from ingest.loader import get_connection
 
+    p = argparse.ArgumentParser()
+    p.add_argument("--seed", type=int, default=SEED)
+    p.add_argument("--no-write", action="store_true", help="print only; leave docs alone")
+    args = p.parse_args()
+
     conn = get_connection()
     real_scores = conn.execute("select entity_kind, score from match_score").fetchall()
     if not real_scores:
@@ -444,11 +462,10 @@ def run() -> None:
 
     weights = load_weights(conn)
     target_info = load_targets(conn)
-    rng = random.Random(SEED)
 
     plants, scores, name_only = [], {}, {}
     for kind in ("person", "organization"):
-        kind_plants = make_plants(kind, load_sources(conn, kind), rng)
+        kind_plants = make_plants(kind, load_sources(conn, kind), args.seed)
         if kind == "organization":
             cores = strip_legal_forms(conn, [p.raw for p in kind_plants])
             for p, core in zip(kind_plants, cores, strict=True):
@@ -462,8 +479,10 @@ def run() -> None:
         plants += kind_plants
 
     summary = summarise(plants, scores, real_scores, name_only)
+    summary["seed"] = args.seed
     results = render(summary)
-    write_results(DOC, results)
+    if not args.no_write:
+        write_results(DOC, results)
     print(results)
 
     print("\nTrue plants scoring below 80:")

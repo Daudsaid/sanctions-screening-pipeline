@@ -5,5 +5,6 @@ sources:
     schema: public
     tables:
       - name: raw_sanctions_snapshot
+      - name: raw_sanctions_load
       - name: raw_ch_company
       - name: raw_ch_officer

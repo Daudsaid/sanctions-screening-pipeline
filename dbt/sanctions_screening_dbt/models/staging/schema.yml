@@ -7,18 +7,29 @@ version: 2
 # singular tests in tests/.
 
 models:
-  - name: stg_sanctions_target
+  - name: stg_sanctions_listing
+    description: One row per sanctions list per target (latest version).
     tests:
-      - dbt_expectations.expect_table_row_count_to_be_between:
-          name: sanctions_target_min_rows
-          description: >
-            Volume guard. us_ofac_sdn holds 20,346 targets. Fewer than 15,000
-            means a truncated or empty export, like the header-only OFSI CSV
-            (see docs/decisions.md). Disabled when min_rows_check is false.
+      - dbt_expectations.expect_compound_columns_to_be_unique:
+          name: sanctions_listing_unique
           arguments:
-            min_value: 15000
-          config:
-            enabled: "{{ var('min_rows_check', true) | as_bool }}"
+            column_list: ["dataset", "target_id"]
+    columns:
+      - name: dataset
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['us_ofac_sdn', 'gb_fcdo_sanctions']
+
+  - name: stg_sanctions_target
+    description: One row per sanctioned party, merged across lists.
+    tests:
+      - dbt_expectations.expression_is_true:
+          name: sanctions_target_on_a_list
+          description: Every merged target comes from at least one list.
+          arguments:
+            expression: "cardinality(datasets) >= 1"
     columns:
       - name: target_id
         tests: [unique, not_null]

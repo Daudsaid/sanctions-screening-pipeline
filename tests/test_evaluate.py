@@ -91,19 +91,34 @@ SOURCES = [
 
 
 def test_make_plants_is_seeded_and_balanced():
-    a = make_plants("person", SOURCES, random.Random(1), n=50)
-    b = make_plants("person", SOURCES, random.Random(1), n=50)
+    a = make_plants("person", SOURCES, seed=1, n=50)
+    b = make_plants("person", SOURCES, seed=1, n=50)
     assert [(p.target_id, p.raw, p.dob) for p in a] == [(p.target_id, p.raw, p.dob) for p in b]
     assert len(a) == 50
     assert len({p.target_id for p in a}) == 50  # one plant per target
     for change in PERSON_CHANGES:
-        group = [p for p in a if p.change == change]
-        assert len(group) == 10
-        assert sum(p.is_true for p in group) == 5  # half agree on birth date
+        assert sum(p.change == change for p in a) == 10
+    assert 15 <= sum(p.is_true for p in a) <= 35  # about half agree on birth date
+
+
+def test_a_different_seed_gives_a_different_sample():
+    a = make_plants("person", SOURCES, seed=1, n=50)
+    b = make_plants("person", SOURCES, seed=2, n=50)
+    assert {p.target_id for p in a} != {p.target_id for p in b}
+
+
+def test_removing_a_target_leaves_other_plants_unchanged():
+    full = make_plants("person", SOURCES, seed=1, n=50)
+    dropped = full[0].target_id
+    fewer = make_plants("person", [s for s in SOURCES if s[0] != dropped], seed=1, n=50)
+    plant = {p.target_id: (p.change, p.raw, p.dob, p.is_true) for p in full}
+    kept = [p for p in fewer if p.target_id in plant]
+    unchanged = sum(plant[p.target_id] == (p.change, p.raw, p.dob, p.is_true) for p in kept)
+    assert unchanged >= len(full) - 5  # only a handful move, not the whole sample
 
 
 def test_organisation_plants_are_all_true_and_have_no_dob():
-    plants = make_plants("organization", [(t, n, []) for t, n, _ in SOURCES], rng(), n=40)
+    plants = make_plants("organization", [(t, n, []) for t, n, _ in SOURCES], n=40)
     assert all(p.is_true and p.dob is None for p in plants)
 
 

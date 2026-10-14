@@ -66,3 +66,66 @@ unit_tests:
     expect:
       rows:
         - {appointment_id: A1, source_version: v2, is_current: false}
+
+  - name: sanctions_listing_drops_delisted_targets
+    description: >
+      A target missing from its list's latest export is not screened, even
+      though its old raw rows remain; the latest version of a listed target
+      wins.
+    model: stg_sanctions_listing
+    given:
+      - input: source('raw', 'raw_sanctions_load')
+        format: sql
+        rows: |
+          select * from (values
+            (1, 'us_ofac_sdn', '2026-09-01'::timestamptz, 2, array['T1', 'T2']),
+            (2, 'us_ofac_sdn', '2026-10-01'::timestamptz, 1, array['T1'])
+          ) as v(load_id, dataset, loaded_at, row_count, target_ids)
+      - input: source('raw', 'raw_sanctions_snapshot')
+        format: sql
+        rows: |
+          select id, target_id, 'us_ofac_sdn'::text as dataset, source_version,
+                 ingested_at::timestamptz, raw::jsonb as raw
+          from (values
+            (1, 'T1', 'v1', '2026-09-01', '{"schema": "Person", "name": "Old Name"}'),
+            (2, 'T2', 'v1', '2026-09-01', '{"schema": "Person", "name": "Delisted Person"}'),
+            (3, 'T1', 'v2', '2026-10-01', '{"schema": "Person", "name": "New Name"}')
+          ) as v(id, target_id, source_version, ingested_at, raw)
+    expect:
+      rows:
+        - {target_id: T1, dataset: us_ofac_sdn, primary_name: New Name}
+
+  - name: sanctions_target_merges_lists
+    description: >
+      A party on both lists is one target: the UK primary name wins, the US
+      primary name becomes an alias, and birth dates and countries combine.
+    model: stg_sanctions_target
+    given:
+      - input: ref('stg_sanctions_listing')
+        format: sql
+        rows: |
+          select * from (values
+            ('T1', 'us_ofac_sdn', 'Person', 'person', 'Erkin Norov',
+             array['E. Norov'], array['1954'], array['ru'], array['US-RUSHAR'],
+             '2026-10-01'::timestamp, 'v1', '2026-10-01'::timestamptz),
+            ('T1', 'gb_fcdo_sanctions', 'Person', 'person', 'Erkin NOROV',
+             array[]::text[], array['1954-02-01'], array['ru', 'uz'], array['GB-RUS'],
+             '2026-09-01'::timestamp, 'v1', '2026-10-01'::timestamptz),
+            ('T2', 'gb_fcdo_sanctions', 'Organization', 'organization', 'Romashka OOO',
+             array[]::text[], array[]::text[], array['ru'], array['GB-RUS'],
+             '2026-09-01'::timestamp, 'v1', '2026-10-01'::timestamptz)
+          ) as v(target_id, dataset, entity_type, entity_group, primary_name, aliases,
+                 birth_dates, countries, program_ids, last_change, source_version, ingested_at)
+    expect:
+      format: sql
+      rows: |
+        select * from (values
+          ('T1', array['gb_fcdo_sanctions', 'us_ofac_sdn'], 'Person', 'person', 'Erkin NOROV',
+           array['E. Norov', 'Erkin Norov'], array['1954', '1954-02-01'],
+           array['ru', 'uz'], array['GB-RUS', 'US-RUSHAR'],
+           '2026-10-01'::timestamp, '2026-10-01'::timestamptz),
+          ('T2', array['gb_fcdo_sanctions'], 'Organization', 'organization', 'Romashka OOO',
+           array[]::text[], array[]::text[], array['ru'], array['GB-RUS'],
+           '2026-09-01'::timestamp, '2026-10-01'::timestamptz)
+        ) as v(target_id, datasets, entity_type, entity_group, primary_name, aliases,
+               birth_dates, countries, program_ids, last_change, ingested_at)

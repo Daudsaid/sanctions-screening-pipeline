@@ -3,13 +3,14 @@
 [![CI](https://github.com/Daudsaid/sanctions-screening-pipeline/actions/workflows/ci.yml/badge.svg)](https://github.com/Daudsaid/sanctions-screening-pipeline/actions/workflows/ci.yml)
 
 An end-to-end pipeline that screens UK companies and their officers from
-Companies House against the US OFAC sanctions list. Every potential match
-gets a 0-100 score with the reasons behind it, and the alert threshold is
-chosen from a measured evaluation, not by guesswork.
+Companies House against the UK Sanctions List and the US OFAC list. Every
+potential match gets a 0-100 score with the reasons behind it, and the alert
+threshold is chosen from a measured evaluation, not by guesswork.
 
 Built as a portfolio project on a defined slice of the register: 5,406
 active fund-management companies (SIC 66300), their 9,856 current person
-officers and 275 corporate officers, screened against 20,346 OFAC targets.
+officers and 275 corporate officers, screened against 23,271 sanctioned
+parties (UK and US lists merged, 3,534 of them on both).
 It is not a production screening system, and the gaps that would need
 closing first are listed [below](#known-limitations-and-next-steps).
 
@@ -19,10 +20,11 @@ closing first are listed [below](#known-limitations-and-next-steps).
 | --- | --- |
 | **Stack** | Python 3.12, PostgreSQL 16, dbt 1.12 + dbt-expectations, rapidfuzz, uv, Docker, GitHub Actions |
 | **Pattern** | ELT: raw JSON landed unchanged, all cleaning in dbt, matching in Python |
-| **Recall** | 97% of 300 planted true matches at the chosen threshold |
-| **Alert volume** | 26 alerts to review across about 15,500 real subjects |
-| **False alerts from birth-date conflicts** | 0 of 100 |
-| **Quality gates** | 72 dbt data tests, 3 dbt unit tests, 112 pytest tests, CI on every push |
+| **Sanctions lists** | UK Sanctions List (FCDO) and US OFAC SDN, via OpenSanctions, merged per party |
+| **Recall** | 93-96% of about 300 planted true matches at the chosen threshold, across five samples |
+| **Alert volume** | 30 alerts to review across about 15,500 real subjects |
+| **False alerts from birth-date conflicts** | 0 on every sample |
+| **Quality gates** | 78 dbt data tests, 5 dbt unit tests, 114 pytest tests, CI on every push |
 
 Every design choice, including the ones that turned out wrong, is written
 up in [docs/decisions.md](docs/decisions.md). The evaluation method and full
@@ -51,11 +53,12 @@ Matching names sounds simple. In practice:
 ## Architecture
 
 ```text
-OpenSanctions (us_ofac_sdn) ─┐
-Companies House bulk file ───┼─> ingest/ ─> raw tables (Postgres, JSONB, content-hashed)
-Companies House officers API ┘                       │
+OpenSanctions (UK FCDO, US OFAC) ─┐
+Companies House bulk file ────────┼─> ingest/ ─> raw tables (Postgres, JSONB, content-hashed)
+Companies House officers API ─────┘                  │
                                                      v
-                          dbt staging        typed, filtered, one row per entity
+                          dbt staging        typed, filtered, one row per entity;
+                                             sanctions lists merged, delisted dropped
                                                      │   + data quality tests
                           dbt intermediate   int_name_norm: one normalisation for
                                              both sides, legal forms stripped,
@@ -77,9 +80,9 @@ Companies House officers API ┘                       │
 
 | Stage | What it does |
 | --- | --- |
-| [Ingest](ingest/) | Downloads and caches the source files, then loads each record unchanged as JSON with a content hash. Volatile fields such as `last_seen` are excluded from the hash, so a rerun against an unchanged export loads 0 rows. |
-| [dbt](dbt/sanctions_screening_dbt/) | Turns raw JSON into typed staging views, then builds `int_name_norm`, where subjects and targets are normalised by the same macro. Parsing repairs live here: "SURNAME, Forenames, Title" splitting, leading titles stripped as whole words only, companies filed under a person role reclassified, and non-Latin names dropped without losing any target. |
-| [Candidates](matching/block.py) | Compares every subject name with every target name of the same kind, about 330M pairs in two minutes on a laptop. There is no blocking, so this step cannot miss a pair. |
+| [Ingest](ingest/) | Downloads and caches the source files, then loads each record unchanged as JSON with a content hash. Volatile fields such as `last_seen` are excluded from the hash, so a rerun against an unchanged export loads 0 rows. Each sanctions load also records its full id list, so a target that drops off a list stops being screened. |
+| [dbt](dbt/sanctions_screening_dbt/) | Turns raw JSON into typed staging views, then builds `int_name_norm`, where subjects and targets are normalised by the same macro. Merges a party listed by both the UK and the US into one target, keeping every name and birth date from both lists. Parsing repairs live here: "SURNAME, Forenames, Title" splitting, leading titles stripped as whole words only, companies filed under a person role reclassified, and non-Latin names dropped without losing any target. |
+| [Candidates](matching/block.py) | Compares every subject name with every target name of the same kind, about 410M pairs in two to three minutes on a laptop. There is no blocking, so this step cannot miss a pair. |
 | [Scoring](matching/score.py) | Matches words one to one, weighted by rarity (IDF), then adds or subtracts points for birth date (compared to the month) and nationality. Every score carries its reasons. |
 | [Alerts](matching/alert.py) | Groups scored pairs into one alert per subject, listing every target it hits. Folds together officer records for the same person at the same company. |
 | [Evaluation](eval/evaluate.py) | Plants synthetic matches, runs them through the production matching code, and reports recall and alert volume at each threshold. |
@@ -115,41 +118,46 @@ Each alert explains itself. For example:
 Natural true matches are too rare in this slice to measure recall, so the
 evaluation plants them:
 
-- **Plants.** A seeded sample of 200 OFAC persons and 200 organisations
-  each get one fake subject with one realistic change: a typo, swapped word
+- **Plants.** A seeded sample of 200 sanctioned persons and 200
+  organisations, from both lists, each get one fake subject with one
+  realistic change: a typo, swapped word
   order, a middle name dropped or added, a transliteration variant, or an
   added UK legal suffix or "UK" / "GROUP".
-- **Negatives.** Half the person plants get a birth date at least two years
+- **Negatives.** About half the person plants get a birth date at least two years
   from the target's. Every real Companies House subject is also treated as a
   negative.
 - **Same code as production.** Plants go through the production candidate
   generation and scoring, with the production word weights. Nothing was
   tuned to the plants.
+- **Several samples.** Recall is reported as the range over five seeds,
+  because a single sample of 200 per kind moves by a couple of points, and
+  a single change type by ten or more.
 
 Results at the chosen threshold of 70:
 
-| Measure | Result |
+| Measure | Range over five samples |
 | --- | --- |
-| Recall, all 300 true plants | 97% |
-| Recall, persons (with matching birth date / on name alone) | 100% / 96% |
-| Recall, organisations | 96% |
-| Recall, organisation names with a typo (weakest change type) | 84% |
-| Pairs scoring 70+ on real subjects | 33 (5 person, 28 organisation) |
-| Alerts to review after grouping per subject | 26 |
-| Birth-date-conflict plants alerting | 0 of 100 |
+| Recall, all true plants | 93-96% |
+| Recall, persons with a matching birth date | 96-99% |
+| Recall, persons on name alone | 87-98% |
+| Recall, organisations | 91-94% |
+| Recall, organisation names with a typo (weakest change type) | 72-92% |
+| Birth-date-conflict plants alerting | 0 on every sample |
+| Pairs scoring 70+ on real subjects (not sampled) | 38 (8 person, 30 organisation) |
+| Alerts to review after grouping per subject | 30 |
 
-**Why 70.** Raising the threshold to 80 would roughly halve the alerting
-pairs (16), but it loses six true plants and drops name-only person recall
-from 96% to 86%. A missed designated party is a regulatory breach, while an
-extra alert costs minutes of analyst time. Going below 65 lets birth-date
-conflicts through for almost no gain in recall.
+**Why 70.** Raising the threshold to 80 would roughly halve the work
+(20 pairs, 18 alerts), but costs 1-3 points of recall and drops name-only
+person recall to 74-88%. A missed designated party is a regulatory breach,
+while an extra alert costs minutes of analyst time. Going below 65 lets
+birth-date conflicts through for about a point of recall.
 
 **What the evaluation shows doesn't work yet.**
 
 - **Organisation typos in short words.** The word-level similarity counts a
   substituted letter as two edits, so words under seven letters cannot
   absorb a typo.
-- **A one-word company name with GROUP added** (TRIALKOM / TRIALKOM GROUP)
+- **A one-word company name with GROUP added** (PLANAR / PLANAR GROUP)
   never becomes a candidate.
 
 Both are explained in [docs/evaluation.md](docs/evaluation.md) and left
@@ -165,15 +173,16 @@ runs on each `dbt build`. These use built-in dbt tests,
 regex, range and row-count checks, and singular SQL tests for checks that
 span models.
 
-- **Errors (48 tests)** block the build before matching runs. They cover
+- **Errors (52 tests)** block the build before matching runs. They cover
   anything that would make screening wrong:
-  - fewer than 15,000 sanctions targets, which guards against an empty or
-    truncated upstream export
+  - a sanctions list missing or below its floor (15,000 rows for OFAC,
+    4,500 for the UK list), which guards against an empty or truncated
+    upstream export
   - a malformed birth date or company number
   - a date in the future
   - a name that no longer normalises cleanly
   - a sanctions target left with no screenable name
-- **Warnings (24 tests)** track known source quirks that staging already
+- **Warnings (26 tests)** track known source quirks that staging already
   handles, such as officers who resigned before they were appointed, or one
   person filed under several officer IDs. Each records its expected count,
   so a change shows up in every build.
@@ -201,7 +210,7 @@ make up                         # Postgres 16; creates the raw tables on first s
 and unzip it into `data/raw/`, then run:
 
 ```sh
-uv run --env-file .env python -m ingest.opensanctions
+uv run --env-file .env python -m ingest.opensanctions          # UK and US lists (or --dataset NAME)
 uv run --env-file .env python -m ingest.companies_house_bulk --sic 66300
 uv run --env-file .env python -m ingest.companies_house_officers   # ~1 hour, rate-limited, resumable
 ```
@@ -248,11 +257,9 @@ docs/evaluation.md          evaluation method, results and threshold choice
 
 ## Known limitations and next steps
 
-- **UK Sanctions List not yet included.** OFSI's Consolidated List closed in
-  January 2026, and the FCDO's UK Sanctions List (OpenSanctions
-  `gb_fcdo_sanctions`) is now the UK source. A pipeline screening UK
-  companies should screen against it. It is the next dataset to add, with
-  deduplication of targets designated by both the UK and the US.
+- **Two lists only.** The UK and US lists cover most designations relevant
+  to UK firms, but not the EU or UN lists. OpenSanctions publishes both in
+  the same format, so adding one is a dataset name in ingest and dbt.
 - **Current officers only.** Resigned officers stay in staging but don't
   alert, so an officer who resigned after being designated is missed.
 - **No incremental rescreening.** Every run rescreens everything. There is

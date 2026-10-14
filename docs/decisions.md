@@ -1,5 +1,5 @@
 
-## Sanctions source: OFAC for v1, UK Sanctions List next
+## Sanctions sources: UK Sanctions List and US OFAC
 
 The first choice was gb_hmt_sanctions (the OFSI Consolidated List). On
 2026-09-19 OpenSanctions' bulk export for it returned a header-only CSV
@@ -11,11 +11,10 @@ That was not an upstream bug. OFSI closed the Consolidated List on
 only source of UK designations. The OFSI list is frozen, so pulling GOV.UK's
 OFSI CSV directly is not an alternative either.
 
-v1 uses us_ofac_sdn: same OpenSanctions schema, 20,346 targets. (An earlier
-note said 20,349; the loaded raw table and staging both hold 20,346.)
-Next step: add OpenSanctions' gb_fcdo_sanctions dataset (the UK Sanctions
-List), since a pipeline screening UK companies should screen against UK
-designations, and deduplicate targets designated on both lists.
+v1 used us_ofac_sdn alone: same OpenSanctions schema, 20,346 targets. The
+pipeline now also screens OpenSanctions' gb_fcdo_sanctions dataset (the UK
+Sanctions List), with targets listed on both merged; see "UK Sanctions List
+and delisted targets" below.
 
 ## Idempotent raw loads: hashing excludes volatile fields
 
@@ -152,8 +151,9 @@ trigram similarity, so scoring requires near-exact agreement for them.
 ## Candidate generation (matching/block.py)
 
 No blocking in v1. Every subject name is compared with every target name of
-the same kind with rapidfuzz: 9,866 x 18,253 person names and 6,796 x 21,467
-organisation names, about 330M pairs, in roughly two minutes on a laptop.
+the same kind with rapidfuzz: 9,866 x 25,127 person names and 6,796 x 24,291
+organisation names, about 410M pairs, in roughly two to three minutes on a
+laptop (330M before the UK list was added).
 Blocking exists to make comparison affordable; here comparison is already
 affordable, and comparing everything means candidate generation cannot miss
 a pair. It becomes necessary if the subject side grows to the full register
@@ -167,7 +167,8 @@ least two distinct words (one name contains the other). Without that guard
 token_set_ratio scores single-word targets such as MARTIN or IM at 100
 against any name containing them, and ANTHONY ANTHONY against any Anthony.
 
-Result: 530 person and 3,441 organisation candidate name pairs. Candidates
+Result: 687 person and 3,669 organisation candidate name pairs (530 and
+3,441 with OFAC alone). Candidates
 are generous on purpose. Most organisation candidates share only generic
 words (ASSET MANAGEMENT, INVESTMENTS), and only a handful of person
 candidates agree on birth year, none closely. That is expected for a slice of
@@ -194,8 +195,8 @@ with the reasons stored next to it, so every alert can be explained.
 - Nationality (persons): +5 overlap, -5 both known and no overlap. Kept small
   because OFAC countries mix nationality and residence.
 
-Weights are hand-set. On the real data, 3,709 pairs are scored; 4 person and
-12 organisation pairs reach 80. None look like true matches: the top is
+Weights are hand-set. On the real data, 4,041 pairs are scored; 6 person and
+14 organisation pairs reach 80 (4 and 12 with OFAC alone). None look like true matches: the top is
 exact name collisions ([company], [officer], where one officer ID has a
 birth date five months from the target's and the other has none) and
 spelling variants ([company] / INPESCA). The alert threshold, and whether the
@@ -203,23 +204,26 @@ weights hold up, are for the evaluation set to decide.
 
 ## Evaluation (eval/evaluate.py, docs/evaluation.md)
 
-Recall is measured on planted matches: 200 OFAC person and 200 organisation
-targets (seeded sample, Latin-script primary names), each given one fake
+Recall is measured on planted matches: 200 person and 200 organisation
+sanctions targets (seeded sample, Latin-script primary names), each given one fake
 subject with one change (typo, word order, middle name dropped or added,
 transliteration, UK legal suffix, UK / GROUP). Half the person plants have a
 conflicting birth year and are negatives. Real Companies House subjects are
 treated as negatives. Plants go through the production candidate_pairs and
 score_pair with the production word weights.
 
-Alert threshold: 70. At 70, recall is 97% of 300 true plants (persons 100%,
-96% on name alone, organisations 96%), with 33 pairs on real subjects
-(5 person, 28 organisation), grouped into 26 alerts, and no
-birth-date-conflict plant alerting. At 80 the real pairs fall to 16
-(14 alerts) but recall drops to 95%, and to 86% for persons
-scored on name alone. A conflict caps a perfect name at 60 (65 with a
-nationality match), so 70 keeps a margin above that.
+Alert threshold: 70. With both lists, recall at 70 is 93-96% across five
+samples (persons with a matching birth date 96-99%, on name alone 87-98%,
+organisations 91-94%), with 38 pairs on real subjects (8 person,
+30 organisation), grouped into 30 alerts, and no birth-date-conflict plant
+alerting on any sample. At 80 the real pairs fall to 20 (18 alerts) but
+recall drops 1-3 points, and name-only person recall to 74-88%. A conflict
+caps a perfect name at 60 (65 with a nationality match), so 70 keeps a
+margin above that. The first OFAC-only run gave 97%; that figure came from
+one sample, and the spread across samples (below, and in
+docs/evaluation.md) is the better guide.
 
-Weak spots, left untuned: organisation typos (84% at 70), because fuzz.ratio
+Weak spots, left untuned: organisation typos (72-92% at 70 across samples), because fuzz.ratio
 counts a substituted letter as two edits, so words under seven letters can't
 absorb one, and the misspelt word gets the top rarity weight; and a one-word
 target with UK or GROUP added (TRIALKOM / TRIALKOM GROUP), which the
@@ -251,9 +255,11 @@ Severity warn for known source quirks that staging or scoring already
 tolerates. Every test description gives the count at the 2026-09 load, so
 a change in a warning count is visible.
 
-Volume guards: stg_sanctions_target must have at least 15,000 rows (it has
-20,346), the guard against an empty upstream export like the OFSI one, and
-stg_ch_company and current person officers must not be empty. CI builds
+Volume guards: each sanctions list must have a floor of rows in its latest
+export (us_ofac_sdn 15,000, it has 20,394; gb_fcdo_sanctions 4,500, it has
+6,411), the guard against an empty upstream export like the OFSI one; a
+list missing entirely counts as 0. stg_ch_company and current person
+officers must not be empty. CI builds
 against an empty database, so these are gated by the dbt var
 min_rows_check (true by default, false in CI).
 
@@ -264,9 +270,10 @@ Warnings on the current data (row counts as dbt reports them):
 | warn_person_split_across_officer_ids | 645 | name+birth month groups over 1,437 officer IDs |
 | ch_officer_name_non_ascii | 72 | accented names; unaccent handles them |
 | warn_officer_id_conflicting_details | 39 | 38 IDs with several names, 1 with two birth dates |
-| target_name_core_short | 26 | names of 2 characters or fewer, on 25 targets |
-| warn_sanctions_shared_names | 10 | in-scope targets sharing a primary name |
-| warn_sanctions_raw_alias_duplicates | 10 | 4 alias = primary, 6 repeated aliases; deduplicated |
+| warn_sanctions_delisted | 187 | OFAC targets no longer in the latest export; not screened |
+| warn_sanctions_raw_alias_duplicates | 101 | a list naming a target twice in different letter case (10 on OFAC, 91 on the UK list); deduplicated |
+| target_name_core_short | 35 | names of 2 characters or fewer |
+| warn_sanctions_shared_names | 9 | in-scope targets sharing a primary name |
 | warn_company_previous_name_equals_current | 10 | renamed and renamed back; deduplicated |
 | ch_company_name_double_space | 5 | collapsed by normalisation |
 | ch_company_postcode_present | 4 | not used for matching |
@@ -338,4 +345,60 @@ measured per subject-target pair.
 The same review led to the month-gap birth-date rule above. It raised
 [officer] (born [birth month], target 1968-01-05) from 91 to 96 and [officer] ([birth month] against 1975-01-11) from 78 to 83. Recall on the plants is
 unchanged (true plants have exact months; conflict plants are years away).
+
+## UK Sanctions List and delisted targets
+
+The pipeline screens two lists: the UK Sanctions List (OpenSanctions
+gb_fcdo_sanctions, 6,411 targets) and US OFAC SDN (us_ofac_sdn, 20,394 at
+the 2026-10 reload). OpenSanctions gives a party on several lists the same
+id, so the lists merge on target_id: 3,534 targets are on both, 2,877 only
+on the UK list and 16,860 only on OFAC, 23,271 in all (9,165 persons and
+10,695 organisations in scope). Ingest loads each list with
+`--dataset`, or both by default, and refuses an empty export.
+
+Staging is split in two. stg_sanctions_listing holds one row per list per
+target. stg_sanctions_target merges them: the UK primary name is preferred
+(this pipeline screens UK companies), every other name on either list
+becomes an alias, and birth dates, countries and programmes are combined.
+The lists never disagree on person versus organisation (138 shared targets
+differ only between Company and Organization); a warn test watches for it.
+The lists do disagree on 2,012 primary names and 485 sets of birth dates.
+Combining birth dates favours recall: scoring uses the best-agreeing date,
+so a -40 conflict needs every date from both lists to be over a year off.
+var sanctions_datasets picks the lists to screen.
+
+Reloading OFAC exposed a bug. Raw snapshots are append-only and staging kept
+the latest version of every id ever seen, so 187 targets missing from the
+new export, delisted or re-issued under a new id (55 share a name with a
+current target), were still screened. Each load now records its full id
+list in raw_sanctions_load, and staging screens only targets in each list's
+latest export. warn_sanctions_delisted reports the rest.
+
+The same reload showed the evaluation was too sensitive to the sample: with
+matching unchanged, dropping those 187 targets reshuffled every plant and
+moved recall from 97% to 93%. Plants are now chosen by a hash of seed and
+target id, so a refresh only changes the plants of targets that changed,
+and recall is reported over five seeds.
+
+Effect, OFAC refresh alone, then with the UK list added:
+
+| | OFAC, 2026-09 | OFAC, 2026-10 | UK + OFAC |
+| --- | ---: | ---: | ---: |
+| Real pairs at 70 | 33 | 33 | 38 |
+| Alerts at 70 | 26 | 26 | 30 |
+| Recall at 70, five seeds | 97% (one seed) | 93-97% | 93-96% |
+| DOB-conflict plants alerting | 0 | 0 | 0 |
+
+Five alerts come from targets only on the UK list:
+- [company] (100), [company] (98) and [company]
+  (77) against UAE free-zone companies under the UK Russia regime
+  ([UAE company], [UAE company], [UAE company]).
+- [officer] (97) against Malek Muhammad Ali (born 1956), and
+  [officer] (89, born [birth month]) against Suleiman AL ABBAS, both under
+  the UK Syria regime. The first officer is a secretary with no birth date
+  and the second target has no birth date or country, so neither can be
+  ruled out on this data.
+
+[company] fell from 70.0 to just under, because the extra UK
+names shift word weights. The threshold stays at 70.
 
