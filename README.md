@@ -150,3 +150,12 @@ Postgres.
 - **Hand-set weights.** Scoring weights were set by hand and checked against
   the evaluation, not learned. Duplicate Companies House records for the same
   person are not merged, so one person can alert twice.
+
+## Contact
+
+Daud Abdi
+
+- Email: [daudsaidabdi@gmail.com](mailto:daudsaidabdi@gmail.com)
+- GitHub: [github.com/Daudsaid](https://github.com/Daudsaid)
+- LinkedIn: [linkedin.com/in/daudabdi0506](https://www.linkedin.com/in/daudabdi0506)
+- Website: [daudabdi.com](https://daudabdi.com)
