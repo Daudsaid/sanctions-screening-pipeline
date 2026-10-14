@@ -36,6 +36,10 @@ jobs:
 
       - uses: astral-sh/setup-uv@v6
 
+      # First check: catches a broken workflow file on a PR before it lands.
+      - name: Validate workflow files
+        run: uv run --frozen python scripts/check_workflows.py
+
       - run: uv sync --frozen
 
       - name: Lint

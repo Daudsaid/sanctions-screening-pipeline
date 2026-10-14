@@ -2778,6 +2778,7 @@ dev = [
     { name = "ipykernel" },
     { name = "jupyterlab" },
     { name = "pytest" },
+    { name = "pyyaml" },
     { name = "ruff" },
 ]
 
@@ -2798,6 +2799,7 @@ dev = [
     { name = "ipykernel", specifier = ">=7.4.0" },
     { name = "jupyterlab", specifier = ">=4.6.4" },
     { name = "pytest", specifier = ">=9.1.1" },
+    { name = "pyyaml", specifier = ">=6.0.3" },
     { name = "ruff", specifier = ">=0.16.8" },
 ]
 

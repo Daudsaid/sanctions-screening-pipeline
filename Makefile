@@ -11,6 +11,7 @@ schema:
 	docker compose exec -T postgres sh -c 'psql -v ON_ERROR_STOP=1 -U "$$POSTGRES_USER" -d "$$POSTGRES_DB"' < schema/001_raw.sql
 
 lint:
+	uv run python scripts/check_workflows.py
 	uv run ruff check .
 	uv run ruff format --check .
 
