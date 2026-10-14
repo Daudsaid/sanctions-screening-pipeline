@@ -1,7 +1,8 @@
 -- Targets with raw rows that are missing from their list's latest export:
 -- delisted, or re-issued by OpenSanctions under a new id. They are not
 -- screened. Known 187 on us_ofac_sdn after the 2026-10 reload (55 of them
--- share a name with a current target, so most look like new ids).
+-- share a name with a current target, so most look like new ids). Written
+-- as SQL because it needs the load manifest, not a model.
 {{ config(severity='warn') }}
 
 with latest_load as (

@@ -1,10 +1,12 @@
 version: 2
 
-# Data quality checks from explore/02_data_quality_results.txt (S1-S6,
-# C1-C4, O1-O7). severity error: screening would be wrong if it failed.
-# severity warn: a known source quirk; the description gives the count at
-# the 2026-09 load. Checks that span models or need the raw JSON are
-# singular tests in tests/.
+# Data quality and consistency checks, written with dbt-expectations. They
+# started as the profiling queries in explore/02_data_quality_results.txt
+# (S1-S6, C1-C4, O1-O7) and grew with each inconsistency found since.
+# severity error: screening would be wrong if it failed. severity warn: a
+# known source quirk; the description gives the count at the latest load.
+# Checks on the raw JSON are in sources.yml. Only checks that need a join
+# across models or the sanctions load manifest are SQL files in tests/.
 
 models:
   - name: stg_sanctions_listing
@@ -14,6 +16,52 @@ models:
           name: sanctions_listing_unique
           arguments:
             column_list: ["dataset", "target_id"]
+      - dbt_expectations.expect_table_row_count_to_be_between:
+          name: sanctions_list_volume_ofac
+          description: >
+            Volume guard. us_ofac_sdn held 20,394 targets at the 2026-10 load.
+            Fewer than 15,000 (or none: the list missing) means a truncated
+            or empty export, like the header-only OFSI CSV in 2026-09.
+          arguments:
+            min_value: 15000
+            row_condition: "dataset = 'us_ofac_sdn'"
+          config:
+            enabled: "{{ (var('min_rows_check', true) and 'us_ofac_sdn' in var('sanctions_datasets')) | as_bool }}"
+      - dbt_expectations.expect_table_row_count_to_be_between:
+          name: sanctions_list_volume_uk
+          description: >
+            Volume guard. gb_fcdo_sanctions held 6,411 targets at the 2026-10
+            load. Fewer than 4,500 (or none) means a truncated or empty export.
+          arguments:
+            min_value: 4500
+            row_condition: "dataset = 'gb_fcdo_sanctions'"
+          config:
+            enabled: "{{ (var('min_rows_check', true) and 'gb_fcdo_sanctions' in var('sanctions_datasets')) | as_bool }}"
+      - dbt_expectations.expect_column_distinct_count_to_be_less_than:
+          name: sanctions_lists_agree_on_kind
+          description: >
+            A target that one list calls a person and another an organisation.
+            The merge takes the UK listing's kind. Known 0 (138 targets differ
+            only between Company and Organization, the same group).
+          arguments:
+            column_name: entity_group
+            value: 2
+            group_by: [target_id]
+          config:
+            severity: warn
+      - dbt_expectations.expression_is_true:
+          name: sanctions_listing_names_repeated
+          description: >
+            S4. A list naming a target twice in different letter case (alias
+            equals primary, or a repeated alias). Deduplicated in
+            stg_sanctions_name. Known 83 listings (74 on the UK list, 9 on
+            OFAC), with 101 repeated names between them.
+          arguments:
+            expression: >
+              (select count(*) = count(distinct upper(trim(n)))
+               from unnest(aliases || primary_name) as n)
+          config:
+            severity: warn
     columns:
       - name: dataset
         tests:
@@ -30,6 +78,58 @@ models:
           description: Every merged target comes from at least one list.
           arguments:
             expression: "cardinality(datasets) >= 1"
+      - dbt_expectations.expect_column_distinct_count_to_equal_other_table:
+          name: sanctions_every_target_keeps_a_name
+          description: >
+            Every person or organisation target keeps at least one name in
+            int_name_norm after non-Latin and mixed-script names are dropped.
+            A target with no name can never alert. Known 0 emptied.
+          arguments:
+            column_name: target_id
+            row_condition: "entity_group in ('person', 'organization')"
+            compare_model: ref('int_name_norm')
+            compare_column_name: entity_id
+            compare_row_condition: "side = 'target'"
+      - dbt_expectations.expression_is_true:
+          name: sanctions_birth_dates_format
+          description: >
+            S2. Every birth date is YYYY, YYYY-MM or YYYY-MM-DD; scoring slices
+            the year and month by position. Known 0 bad.
+          arguments:
+            expression: >
+              not exists (select 1 from unnest(birth_dates) as d
+                          where d !~ '^\d{4}(-\d{2}(-\d{2})?)?$')
+      - dbt_expectations.expression_is_true:
+          name: sanctions_birth_years_plausible
+          description: >
+            S2. Birth years between 1900 and this year. A wrong year turns into
+            a -40 birth-date conflict in scoring. Known 0 (range 1921-2006 on
+            OFAC).
+          arguments:
+            expression: >
+              not exists (select 1 from unnest(birth_dates) as d
+                          where d ~ '^\d{4}'
+                            and left(d, 4)::int not between 1900
+                                and extract(year from current_date))
+      - dbt_expectations.expression_is_true:
+          name: sanctions_countries_two_letter
+          description: S3. Country codes are ISO 2-letter, lower case. Known 0 other.
+          arguments:
+            expression: >
+              not exists (select 1 from unnest(countries) as c where c !~ '^[a-z]{2}$')
+          config:
+            severity: warn
+      - dbt_expectations.expect_compound_columns_to_be_unique:
+          name: sanctions_shared_primary_names
+          description: >
+            S5. In-scope targets that share a primary name (two separate
+            persons named ALIREZA DERAKHSHAN). Alerts reference target_id,
+            never a name alone. Known 9 names.
+          arguments:
+            column_list: ["upper(primary_name)"]
+            row_condition: "entity_group in ('person', 'organization')"
+          config:
+            severity: warn
     columns:
       - name: target_id
         tests: [unique, not_null]
@@ -55,26 +155,16 @@ models:
           - accepted_values:
               arguments:
                 values: ['person', 'organization', 'out_of_scope']
-      - name: birth_dates
-        tests:
-          - array_elements_match_regex:
-              name: sanctions_birth_dates_format
-              description: >
-                S2. Every birth date is YYYY, YYYY-MM or YYYY-MM-DD; scoring
-                slices the year and month by position. Known 0 bad of 8,337.
-              arguments:
-                regex: '^\d{4}(-\d{2}(-\d{2})?)?$'
-      - name: countries
-        tests:
-          - array_elements_match_regex:
-              name: sanctions_countries_two_letter
-              description: S3. Country codes are ISO 2-letter, lower case. Known 0 other.
-              arguments:
-                regex: '^[a-z]{2}$'
-              config:
-                severity: warn
 
   - name: stg_sanctions_name
+    tests:
+      - dbt_expectations.expect_compound_columns_to_be_unique:
+          name: sanctions_names_deduplicated
+          description: >
+            S4. One row per name per target, ignoring case. The lists repeat
+            names in different case (see sanctions_listing_names_repeated).
+          arguments:
+            column_list: ["target_id", "upper(name)"]
     columns:
       - name: target_id
         tests:
@@ -111,6 +201,18 @@ models:
           description: C1. Every company carries SIC 66300. Known 0 outside.
           arguments:
             expression: "'66300' = any(sic_codes)"
+          config:
+            severity: warn
+      - dbt_expectations.expect_column_distinct_count_to_equal_other_table:
+          name: ch_every_company_has_officers
+          description: >
+            O1. Every company in the slice has at least one officer record
+            (officers only point at known companies, so equal counts mean full
+            coverage). A gap means the officers crawl missed it. Known 0.
+          arguments:
+            column_name: company_number
+            compare_model: ref('stg_ch_officer')
+            compare_column_name: company_number
           config:
             severity: warn
     columns:
@@ -161,7 +263,34 @@ models:
                 severity: warn
 
   - name: stg_ch_company_name
+    tests:
+      - dbt_expectations.expect_compound_columns_to_be_unique:
+          name: ch_company_name_repeated
+          description: >
+            C3. A company listing the same name twice: a previous name equal
+            to the current one (renamed and renamed back), or the same
+            previous name twice. Harmless: int_name_norm deduplicates names
+            per entity. Known 17 (10 equal to the current name, 7 repeated
+            previous names).
+          arguments:
+            column_list: ["company_number", "name"]
+          config:
+            severity: warn
     columns:
+      - name: name
+        tests:
+          - dbt_expectations.expect_column_values_to_not_match_regex:
+              name: ch_company_name_trailing_the
+              description: >
+                Company names ending in "(THE)" ("HOOVER TRUST FUND
+                LIMITED(THE)"). THE is stripped from both ends by the
+                legal_forms seed, so the legal form before it is stripped
+                too. Known 2.
+              arguments:
+                regex: '\(THE\)\s*$'
+                flags: i
+              config:
+                severity: warn
       - name: company_number
         tests:
           - not_null
@@ -179,7 +308,7 @@ models:
     tests:
       - dbt_expectations.expect_table_row_count_to_be_between:
           name: ch_current_person_officers_not_empty
-          description: Volume guard. 9,859 current person officer IDs in the slice.
+          description: Volume guard. 9,856 current person officer IDs in the slice.
           arguments:
             min_value: 1
             row_condition: "officer_kind = 'person' and is_current"
@@ -200,6 +329,61 @@ models:
             column_B: appointed_on
             or_equal: true
             row_condition: "resigned_on is not null and appointed_on is not null"
+          config:
+            severity: warn
+      - dbt_expectations.expression_is_true:
+          name: ch_officer_appointed_at_16_or_over
+          description: O2. Person officers appointed before turning 16. Source error. Known 0.
+          arguments:
+            expression: "make_date(birth_year, coalesce(birth_month, 1), 1) <= appointed_on - interval '16 years'"
+            row_condition: "officer_kind = 'person' and birth_year is not null and appointed_on is not null"
+          config:
+            severity: warn
+      - dbt_expectations.expression_is_true:
+          name: ch_company_filed_as_person
+          description: >
+            Current companies filed under a person role ("LIMITED,
+            Propensions"), now screened as organisations (filed_as_person).
+            Known 3 current, 6 appointments in all.
+          arguments:
+            expression: "not filed_as_person"
+            row_condition: "is_current"
+          config:
+            severity: warn
+      - dbt_expectations.expect_column_distinct_count_to_be_less_than:
+          name: ch_officer_id_several_names
+          description: >
+            O5. One officer ID with more than one name across its
+            appointments. Every name is matched, like aliases. Known 38.
+          arguments:
+            column_name: name_raw
+            value: 2
+            group_by: [officer_id]
+            row_condition: "officer_kind = 'person'"
+          config:
+            severity: warn
+      - dbt_expectations.expect_column_distinct_count_to_be_less_than:
+          name: ch_officer_id_several_birth_dates
+          description: O5. One officer ID with two birth dates. Known 1.
+          arguments:
+            column_name: birth_year * 100 + birth_month
+            value: 2
+            group_by: [officer_id]
+            row_condition: "officer_kind = 'person' and birth_year is not null"
+          config:
+            severity: warn
+      - dbt_expectations.expect_column_distinct_count_to_be_less_than:
+          name: ch_person_split_across_officer_ids
+          description: >
+            O6. The same name and birth month under several officer IDs:
+            Companies House holds duplicate records for some people. Merged
+            only within a company (matching/alert.py), so one person can
+            alert twice. Known 645 groups covering 1,437 IDs.
+          arguments:
+            column_name: officer_id
+            value: 2
+            group_by: ["upper(name_raw)", birth_year, birth_month]
+            row_condition: "officer_kind = 'person' and birth_year is not null"
           config:
             severity: warn
     columns:
@@ -240,6 +424,18 @@ models:
               arguments:
                 regex: '[,()]'
                 row_condition: "forenames is not null"
+          - dbt_expectations.expect_column_values_to_not_match_regex:
+              name: ch_no_title_left_in_forenames
+              description: >
+                O7. A title still leading the forenames after staging strips
+                one ("SIR DR JOHN" keeps DR). Whole words only, so ANDREW and
+                DREW are not counted. Known 0.
+              arguments:
+                regex: '^(LORD|SIR|DR|DAME|LADY|REV|PROF|MR|MRS|MS|MISS)\.?(\s|$)'
+                flags: i
+                row_condition: "officer_kind = 'person' and forenames is not null"
+              config:
+                severity: warn
       - name: name_raw
         tests:
           - dbt_expectations.expect_column_values_to_not_match_regex:
@@ -250,6 +446,16 @@ models:
               arguments:
                 regex: '\d'
                 row_condition: "officer_kind = 'person'"
+              config:
+                severity: warn
+          - dbt_expectations.expect_column_values_to_not_match_regex:
+              name: ch_officer_name_repeated_comma
+              description: >
+                Repeated commas ("SURNAME,, Forenames"),
+                collapsed before the name is split so forenames are kept.
+                Known 2 (one current, one resigned with ", ,Mr" in the title).
+              arguments:
+                regex: ',\s*,'
               config:
                 severity: warn
           - dbt_expectations.expect_column_values_to_not_match_regex:

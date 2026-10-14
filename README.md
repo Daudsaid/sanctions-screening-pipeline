@@ -24,7 +24,7 @@ closing first are listed [below](#known-limitations-and-next-steps).
 | **Recall** | 93-96% of about 300 planted true matches at the chosen threshold, across five samples |
 | **Alert volume** | 30 alerts to review across about 15,500 real subjects |
 | **False alerts from birth-date conflicts** | 0 on every sample |
-| **Quality gates** | 78 dbt data tests, 5 dbt unit tests, 114 pytest tests, CI on every push |
+| **Quality gates** | 83 dbt data tests (51 with dbt-expectations), 5 dbt unit tests, 114 pytest tests, CI on every push |
 
 Every design choice, including the ones that turned out wrong, is written
 up in [docs/decisions.md](docs/decisions.md). The evaluation method and full
@@ -167,13 +167,25 @@ of it.
 
 ## Data quality
 
-Every check from the initial data profiling is now a permanent test that
-runs on each `dbt build`. These use built-in dbt tests,
-[dbt-expectations](https://github.com/metaplane/dbt-expectations) for
-regex, range and row-count checks, and singular SQL tests for checks that
-span models.
+Every check from the initial data profiling, and every inconsistency found
+since, is a permanent test that runs on each `dbt build`. They are written
+with [dbt-expectations](https://github.com/metaplane/dbt-expectations)
+wherever it can express them (51 of 83), as declarative rules in YAML:
 
-- **Errors (52 tests)** block the build before matching runs. They cover
+- **Formats and ranges:** company numbers, birth dates (including each
+  element of an array), normalised names, no dates in the future.
+- **Consistency within groups:** one officer ID with several names or birth
+  dates, one person filed under several officer IDs, two sanctions lists
+  disagreeing on whether a target is a person or an organisation.
+- **Coverage between tables:** every company has officers, and every
+  sanctioned party keeps at least one screenable name.
+- **Rules on the raw JSON**, before staging: an officer's link names the
+  company it was fetched for, previous company names have no gaps.
+
+The rest are dbt's built-in tests, plus two SQL tests that need a join
+across models or the sanctions load manifest.
+
+- **Errors (53 tests)** block the build before matching runs. They cover
   anything that would make screening wrong:
   - a sanctions list missing or below its floor (15,000 rows for OFAC,
     4,500 for the UK list), which guards against an empty or truncated
@@ -182,7 +194,7 @@ span models.
   - a date in the future
   - a name that no longer normalises cleanly
   - a sanctions target left with no screenable name
-- **Warnings (26 tests)** track known source quirks that staging already
+- **Warnings (30 tests)** track known source quirks that staging already
   handles, such as officers who resigned before they were appointed, or one
   person filed under several officer IDs. Each records its expected count,
   so a change shows up in every build.

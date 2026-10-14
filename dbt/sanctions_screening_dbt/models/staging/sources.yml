@@ -1,10 +1,86 @@
 version: 2
 
+# Checks on the raw JSON, before staging, written with dbt-expectations.
+# severity error: screening would be wrong if it failed. severity warn: a
+# known source quirk; the description gives the count at the latest load.
+
 sources:
   - name: raw
     schema: public
     tables:
       - name: raw_sanctions_snapshot
+        tests:
+          - dbt_expectations.expression_is_true:
+              name: raw_sanctions_timestamps_ordered
+              description: >
+                S6. OpenSanctions timestamps in order: first_seen <= last_change
+                <= last_seen. Not used in screening. Known 0.
+              arguments:
+                expression: >
+                  (raw ->> 'first_seen')::timestamp <= (raw ->> 'last_seen')::timestamp
+                  and (raw ->> 'last_change')::timestamp <= (raw ->> 'last_seen')::timestamp
+                  and (raw ->> 'last_change')::timestamp >= (raw ->> 'first_seen')::timestamp
+              config:
+                severity: warn
+
       - name: raw_sanctions_load
+
       - name: raw_ch_company
+        tests:
+          - dbt_expectations.expression_is_true:
+              name: raw_ch_previous_names_have_no_gaps
+              description: >
+                C3. PreviousName_1..10 are filled in order, with no empty slot
+                before a filled one. Known 0.
+              arguments:
+                expression: >
+                  not exists (
+                    select 1 from generate_series(1, 9) as i
+                    where nullif(trim(raw ->> ('PreviousName_' || i || '.CompanyName')), '') is null
+                      and nullif(trim(raw ->> ('PreviousName_' || (i + 1) || '.CompanyName')), '') is not null
+                  )
+              config:
+                severity: warn
+          - dbt_expectations.expression_is_true:
+              name: raw_ch_name_change_dates_parse
+              description: >
+                C3. Every previous-name change date is dd/mm/yyyy; others
+                become null in stg_ch_company_name. Known 0.
+              arguments:
+                expression: >
+                  not exists (
+                    select 1 from generate_series(1, 10) as i
+                    where nullif(trim(raw ->> ('PreviousName_' || i || '.CONDATE')), '') is not null
+                      and raw ->> ('PreviousName_' || i || '.CONDATE') !~ '^\d{2}/\d{2}/\d{4}$'
+                  )
+              config:
+                severity: warn
+          - dbt_expectations.expression_is_true:
+              name: raw_ch_registered_country_uk
+              description: >
+                C4. Registered-office country is a UK spelling or blank. Not
+                used for matching. Known 2,511 ENGLAND, 2,104 UNITED KINGDOM,
+                547 blank, 170 SCOTLAND, 45 WALES, 29 NORTHERN IRELAND; 0 other.
+              arguments:
+                expression: >
+                  coalesce(trim(raw ->> 'RegAddress.Country'), '') in
+                  ('', 'ENGLAND', 'UNITED KINGDOM', 'SCOTLAND', 'WALES', 'NORTHERN IRELAND')
+              config:
+                severity: warn
+
       - name: raw_ch_officer
+        tests:
+          - dbt_expectations.expression_is_true:
+              name: raw_ch_officer_link_matches_company
+              description: >
+                O1. The appointment's self link names the company it was
+                fetched for, and every appointment links to an officer.
+                Otherwise an alert would point at the wrong company or
+                officer. Known 0.
+              arguments:
+                expression: >
+                  coalesce(
+                    split_part(raw -> 'links' ->> 'self', '/', 3) = company_number
+                    and nullif(raw -> 'links' -> 'officer' ->> 'appointments', '') is not null,
+                    false
+                  )

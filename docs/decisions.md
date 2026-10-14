@@ -232,10 +232,32 @@ two-word guard keeps out of candidates entirely.
 ## Data quality checks (dbt tests + dbt-expectations)
 
 The one-off profiling queries (explore/02_data_quality_results.txt, S1-S6,
-C1-C4, O1-O7) are now permanent tests that run on every `dbt build`: schema
-tests in models/*/schema.yml, using the metaplane/dbt_expectations package
-for regex, range and row-count checks, plus singular tests in tests/ for
-checks that span models or read the raw JSON.
+C1-C4, O1-O7), and every inconsistency found since, are permanent tests that
+run on every `dbt build`. They are written with the metaplane/dbt_expectations
+package wherever it can express them, in models/*/schema.yml for models and
+models/staging/sources.yml for the raw JSON:
+
+- single-column rules: regex formats (company numbers, normalised names, no
+  leftover commas or titles), value ranges (birth years, dates not in the
+  future), not-null with a condition (nationality tokens mapped)
+- row rules with expression_is_true, including rules on raw JSON (an
+  appointment's link names its company) and on array columns via a
+  subquery (every birth date is YYYY, YYYY-MM or YYYY-MM-DD)
+- uniqueness of expressions, such as one name per target ignoring case
+  (expect_compound_columns_to_be_unique on upper(name))
+- consistency within groups (expect_column_distinct_count_to_be_less_than
+  with group_by): one officer ID with several names or birth dates, one
+  person under several officer IDs, two lists disagreeing on a target's kind
+- coverage between models (expect_column_distinct_count_to_equal_other_table):
+  every company has officers, every sanctions target keeps a name
+- volume (expect_table_row_count_to_be_between), per sanctions list
+
+83 data tests in all: 51 dbt-expectations, 30 built-in (unique, not_null,
+accepted_values, relationships) and 2 SQL files in tests/, kept as SQL
+because they need what dbt-expectations does not offer: a row-level join
+between two models (officers appointed before incorporation) and the
+sanctions load manifest (delisted targets). Plus 5 unit tests on the parsing
+and merge rules.
 
 Why dbt tests rather than Great Expectations or Soda: every transformation
 already lives in dbt on Postgres, so the checks run in the same command,
@@ -248,44 +270,48 @@ beyond dbt (data docs, profiling, anomaly detection over time) isn't needed
 at this size. dbt-expectations provides the Great Expectations style checks
 as dbt macros, so nothing is lost by staying in dbt.
 
-The rule: severity error if a failure would make screening wrong (a missing
-or truncated sanctions list, an unparseable birth date, a name that no
-longer normalises the same way on both sides, a target with no names left).
-Severity warn for known source quirks that staging or scoring already
-tolerates. Every test description gives the count at the 2026-09 load, so
-a change in a warning count is visible.
+The rule: severity error (53 tests) if a failure would make screening wrong
+(a missing or truncated sanctions list, an unparseable birth date, a name
+that no longer normalises the same way on both sides, a target with no
+names left, a legal form left in a company's matching name). Severity warn
+(30 tests) for known source quirks that staging or scoring already
+tolerates. Every test description gives the count at the latest load, so a
+change in a warning count is visible.
 
 Volume guards: each sanctions list must have a floor of rows in its latest
 export (us_ofac_sdn 15,000, it has 20,394; gb_fcdo_sanctions 4,500, it has
 6,411), the guard against an empty upstream export like the OFSI one; a
 list missing entirely counts as 0. stg_ch_company and current person
-officers must not be empty. CI builds
-against an empty database, so these are gated by the dbt var
-min_rows_check (true by default, false in CI).
+officers must not be empty. CI builds against an empty database, so these
+are gated by the dbt var min_rows_check (true by default, false in CI); a
+list's guard is also off when var sanctions_datasets leaves it out.
 
 Warnings on the current data (row counts as dbt reports them):
 
 | Test | Rows | Note |
 |---|---:|---|
-| warn_person_split_across_officer_ids | 645 | name+birth month groups over 1,437 officer IDs |
-| ch_officer_name_non_ascii | 72 | accented names; unaccent handles them |
-| warn_officer_id_conflicting_details | 39 | 38 IDs with several names, 1 with two birth dates |
+| ch_person_split_across_officer_ids | 645 | name+birth month groups over 1,437 officer IDs |
 | warn_sanctions_delisted | 187 | OFAC targets no longer in the latest export; not screened |
-| warn_sanctions_raw_alias_duplicates | 101 | a list naming a target twice in different letter case (10 on OFAC, 91 on the UK list); deduplicated |
+| sanctions_listing_names_repeated | 83 | listings naming a target twice in different letter case (74 UK, 9 OFAC); deduplicated |
+| ch_officer_name_non_ascii | 72 | accented names; unaccent handles them |
+| ch_officer_id_several_names | 38 | every name is matched, like aliases |
 | target_name_core_short | 35 | names of 2 characters or fewer |
-| warn_sanctions_shared_names | 9 | in-scope targets sharing a primary name |
-| warn_company_previous_name_equals_current | 10 | renamed and renamed back; deduplicated |
+| ch_company_name_repeated | 17 | 10 previous names equal to the current one, 7 repeated previous names |
+| sanctions_shared_primary_names | 9 | in-scope targets sharing a primary name |
 | ch_company_name_double_space | 5 | collapsed by normalisation |
 | ch_company_postcode_present | 4 | not used for matching |
-| warn_officer_name_repairs | 5 | 3 current companies filed as persons, 2 repeated commas; repaired |
-| warn_company_name_trailing_the | 2 | names ending "(THE)"; legal form now stripped |
+| ch_company_filed_as_person | 3 | current companies filed under a person role; screened as organisations |
+| ch_company_name_trailing_the | 2 | names ending "(THE)"; legal form now stripped |
+| ch_officer_name_repeated_comma | 2 | collapsed before splitting |
 | ch_resigned_after_appointed | 2 | resigned before appointed; source error |
 | ch_person_name_has_digit | 2 | possibly corporate officers filed as persons |
+| ch_officer_id_several_birth_dates | 1 | one officer ID, two birth dates |
 
 All error-severity tests pass. The previous-name check (C3) reported 0
-names equal to the current name during profiling; the test finds 10 exact
-matches, so the profiling query must have compared something else. They
-are harmless, since names are deduplicated per entity in int_name_norm.
+names equal to the current name during profiling; the test finds 10, plus
+7 repeated previous names, so the profiling query must have compared
+something else. They are harmless, since names are deduplicated per entity
+in int_name_norm.
 
 ## Officer and company name repairs
 

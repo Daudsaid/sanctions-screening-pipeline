@@ -28,13 +28,23 @@ models:
               description: >
                 Target names of two characters or fewer (NK, BS, IM, H1);
                 trigram and edit-distance similarity are unreliable for them,
-                so scoring requires exact agreement. Known 26 names on 25
-                targets (22 organisations, 3 persons).
+                so scoring requires exact agreement. Known 35 with both
+                sanctions lists (26 on OFAC alone).
               arguments:
                 min_value: 3
                 row_condition: "side = 'target'"
               config:
                 severity: warn
+          - dbt_expectations.expect_column_values_to_not_match_regex:
+              name: subject_core_no_legal_form_left
+              description: >
+                Subject organisation cores never end in a UK legal form: if
+                one does, stripping failed (as "HOOVER TRUST FUND LIMITED THE"
+                did) and the extra word lowers every match score for that
+                company. Known 0.
+              arguments:
+                regex: ' (LIMITED|LTD|PLC|LLP)( THE)?$'
+                row_condition: "side = 'subject' and entity_kind = 'organization'"
       - name: side
         tests:
           - accepted_values:
@@ -45,3 +55,19 @@ models:
           - accepted_values:
               arguments:
                 values: ['person', 'organization']
+
+  - name: int_officer_nationality
+    columns:
+      - name: iso2
+        tests:
+          - dbt_expectations.expect_column_values_to_not_be_null:
+              name: nationality_tokens_mapped
+              description: >
+                O4. Every nationality token maps to an ISO code through the
+                nationality_token_iso seed, so a new spelling in a future load
+                is visible without blocking the build. Known 0 unmapped.
+              arguments:
+                row_condition: "token <> 'OTHER'"
+              config:
+                severity: warn
+
