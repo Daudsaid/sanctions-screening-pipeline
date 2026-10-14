@@ -34,7 +34,7 @@ Name matching sounds simple and isn't:
 
 ELT: raw data is landed unchanged, and all cleaning happens in the database.
 
-```
+```text
 OpenSanctions (us_ofac_sdn) ─┐
 Companies House bulk file ───┼─> ingest/ ─> raw tables (Postgres, JSONB)
 Companies House officers API ┘                       │
@@ -81,8 +81,8 @@ negatives. Full method and tables: [docs/evaluation.md](docs/evaluation.md).
 
 At the chosen threshold of 70:
 
-| | |
-|---|---|
+| Measure | Result |
+| --- | --- |
 | Recall on 300 true plants | 97% |
 | Persons (with matching birth date / name only) | 100% / 96% |
 | Organisations | 96% |
