@@ -182,7 +182,9 @@ with the reasons stored next to it, so every alert can be explained.
 
 - Name: words matched one to one, spelling variants allowed (fuzz.ratio >=
   85), each word weighted by rarity (IDF over both sides). A shared ROMASHKA
-  counts far more than a shared MANAGEMENT or MOHAMMED, so "[company]" against "ATLAS CURRENCY EXCHANGE" scores 78, not 100. Words of
+  counts far more than a shared MANAGEMENT or MOHAMMED, so a company named
+  only CURRENCY and EXCHANGE scores 78 against "ATLAS CURRENCY EXCHANGE",
+  not 100. Words of
   four letters or fewer must match exactly: without that rule IFC / IFDC,
   PSC / PBSC and TACO / TAFCO scored 86-89, and 21 organisation pairs
   reached 80 instead of 12.
