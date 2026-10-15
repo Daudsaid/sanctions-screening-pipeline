@@ -105,14 +105,20 @@ A subject-target pair is scored on its best pair of names:
 - **Nationality (persons).** +5 or -5. Kept small, because OFAC's
   "countries" mixes nationality, citizenship and residence.
 
-Each alert explains itself. For example:
+Each alert explains itself. For example, an alert from the real run, with
+the Companies House officer anonymised (the sanctioned party's alias is a
+public designation):
 
 ```text
 96.4  [officer]  vs  Ali Muhammad Abu Turab (alias ALI MOHAMMED)
-      name 96: [officer] / ALI MOHAMMED;
-      +5 birth month [birth month] within 1 month of 1968-01;
+      name 96: [officer's name, same words in another order] / ALI MOHAMMED;
+      +5 birth month within 1 month of 1968-01;
       -5 nationality differs (gb vs pk, sa)
 ```
+
+The docs refer to real Companies House officers and companies by
+description, never by name: appearing in a screening run is not evidence
+of anything, and none of the alerts here is a confirmed match.
 
 ## Evaluation
 

@@ -158,10 +158,11 @@ alert volume on real subjects.
 - Real subjects are assumed to be negatives. The pairs at 70 or above were
   reviewed by name, birth date and nationality (see docs/decisions.md,
   "Alerts" and "UK Sanctions List"). None is an obvious true match, but a
-  few need an analyst with more than this data: [company]
-  against [sanctioned firm] (listed with a UK link), [officer]
-  (nationality matches, birth date five months off) and [officer] (birth
-  date one month off, nationality differs).
+  few need an analyst with more than this data: a company whose name
+  matches a sanctioned investment firm listed with a UK link, an officer
+  whose nationality matches the target's with a birth date five months off,
+  and an officer whose birth date is a month off but whose nationality
+  differs. Real officers and companies are described, not named.
 - The real-alert counts are for this slice of about 16,400 subjects. They
   will scale with the register, and organisation alerts are driven by
   generic words that a larger slice will contain more of.

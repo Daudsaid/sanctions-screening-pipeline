@@ -3,7 +3,7 @@
 from matching.alert import Pair, group_alerts
 
 
-def pair(subject_id, target_id, score, name="[officer]", subject_type="officer"):
+def pair(subject_id, target_id, score, name="ALEX MORGAN", subject_type="officer"):
     kind = "person" if subject_type == "officer" else "organization"
     return Pair(subject_type, subject_id, target_id, kind, score, name, f"name {score}")
 
@@ -14,7 +14,7 @@ def test_pairs_below_threshold_do_not_alert():
 
 def test_one_subject_hitting_several_targets_is_one_alert():
     pairs = [
-        pair("C1", f"T{i}", s, "[company]", "company")
+        pair("C1", f"T{i}", s, "GLOBAL CURRENCY EXCHANGE", "company")
         for i, s in enumerate([78.1, 71.6, 77.8])
     ]
     [alert] = group_alerts(pairs, {}, threshold=70)
@@ -37,7 +37,7 @@ def test_same_name_officers_at_different_companies_stay_separate():
 
 
 def test_different_names_at_one_company_stay_separate():
-    pairs = [pair("O1", "T1", 100, "[officer]"), pair("O2", "T2", 90, "[officer]")]
+    pairs = [pair("O1", "T1", 100, "ALEX MORGAN"), pair("O2", "T2", 90, "SAM TAYLOR")]
     alerts = group_alerts(pairs, {"O1": {"C1"}, "O2": {"C1"}}, threshold=70)
     assert len(alerts) == 2
 
@@ -50,7 +50,7 @@ def test_folding_is_transitive_through_shared_companies():
 
 
 def test_alert_on_resigned_officers_only_is_flagged():
-    pairs = [pair("O1", "T1", 100), pair("O2", "T2", 90, "[officer]")]
+    pairs = [pair("O1", "T1", 100), pair("O2", "T2", 90, "SAM TAYLOR")]
     alerts = group_alerts(pairs, {}, threshold=70, current_officers={"O2"})
     flags = {a.subject_ids[0]: a.resigned_only for a in alerts}
     assert flags == {"O1": True, "O2": False}

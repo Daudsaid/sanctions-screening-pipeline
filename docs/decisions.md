@@ -197,9 +197,10 @@ with the reasons stored next to it, so every alert can be explained.
 
 Weights are hand-set. On the real data, 4,099 pairs are scored; 6 person and
 14 organisation pairs reach 80 (4 and 12 with OFAC alone). None look like true matches: the top is
-exact name collisions ([company], [officer], where one officer ID has a
-birth date five months from the target's and the other has none) and
-spelling variants ([company] / INPESCA). The alert threshold, and whether the
+exact name collisions (a company with a one-word name, and an officer with a
+common Chinese name, recorded under two officer IDs, one with a birth date
+five months from the target's and one with none) and one-word spelling
+variants a letter apart. The alert threshold, and whether the
 weights hold up, are for the evaluation set to decide.
 
 ## Evaluation (eval/evaluate.py, docs/evaluation.md)
@@ -324,7 +325,7 @@ cover, found three that changed what gets screened:
   person-role name whose surname field ends in LIMITED, LTD, LLP or PLC is
   now an organization named in the right order ("Propensions LIMITED"),
   flagged filed_as_person. 6 appointments, 3 of them current.
-- A repeated comma ("SURNAME,, Forenames") pushed the
+- A repeated comma ("SURNAME,, Forenames") pushed one officer's
   forenames into the title field, which matching ignores, so a current
   director was screened on his surname alone. Repeated commas are collapsed
   before the name is split.
@@ -333,8 +334,8 @@ cover, found three that changed what gets screened:
   the legal_forms seed. Only these 2 names end in THE, on either side.
 
 Effect: 3 officer IDs move from the person side to the organisation side,
-1 organisation candidate is added ([company] / TCH CONSULTANCY, score
-38), and alert counts at every threshold are unchanged. Recall at 70 is
+1 organisation candidate is added (a consultancy a letter away from a
+target's name, score 38), and alert counts at every threshold are unchanged. Recall at 70 is
 still 97%. At 60, DOB-conflict plant alerts went from 21 to 19, because
 word weights shift slightly when the subject names change.
 
@@ -348,13 +349,13 @@ Portuguese accents (GESTO DE PARTICIPAES) cannot be repaired on our side.
 match_score has one row per subject-target pair, but an analyst reviews a
 subject. Reviewing the 33 pairs at 70 showed two kinds of repetition:
 
-- One subject against several targets. [company] scored
-  70+ against six sanctioned exchange houses ("Atlas Currency Exchange",
-  "Sina Currency Exchange Company"...), because CURRENCY and EXCHANGE are
-  rare among UK fund managers and weigh a lot. [company] hit two different
-  entities both called Tamyna.
-- One person under two officer IDs. [officer] is director and secretary of
-  the same company; only the director record has a birth date, so the
+- One subject against several targets. A company named only with the words
+  of a currency exchange scored 70+ against six sanctioned exchange houses
+  ("Atlas Currency Exchange", "Sina Currency Exchange Company"...), because
+  CURRENCY and EXCHANGE are rare among UK fund managers and weigh a lot.
+  Another company hit two different entities both called Tamyna.
+- One person under two officer IDs. One officer is director and secretary
+  of the same company; only the director record has a birth date, so the
   name+DOB duplicate check (645 groups) can't see it.
 
 match_alert holds one row per subject at or above the threshold, listing
@@ -368,8 +369,9 @@ At 70: 33 pairs become 26 alerts (4 person, 22 organisation). At 80:
 16 pairs, 14 alerts. The evaluation still counts pairs, since recall is
 measured per subject-target pair.
 
-The same review led to the month-gap birth-date rule above. It raised
-[officer] (born [birth month], target 1968-01-05) from 91 to 96 and [officer] ([birth month] against 1975-01-11) from 78 to 83. Recall on the plants is
+The same review led to the month-gap birth-date rule above. It raised one
+officer born a month before the target's listed date, across a new year,
+from 91 to 96, and another four months apart from 78 to 83. Recall on the plants is
 unchanged (true plants have exact months; conflict plants are years away).
 
 ## UK Sanctions List and delisted targets
@@ -416,16 +418,15 @@ Effect, OFAC refresh alone, then with the UK list added:
 | DOB-conflict plants alerting | 0 | 0 | 0 |
 
 Five alerts come from targets only on the UK list:
-- [company] (100), [company] (98) and [company]
-  (77) against UAE free-zone companies under the UK Russia regime
-  ([UAE company], [UAE company], [UAE company]).
-- [officer] (97) against Malek Muhammad Ali (born 1956), and
-  [officer] (89, born [birth month]) against Suleiman AL ABBAS, both under
-  the UK Syria regime. The first officer is a secretary with no birth date
-  and the second target has no birth date or country, so neither can be
-  ruled out on this data.
+- Three UK companies (scores 100, 98 and 77) whose names match UAE
+  free-zone companies under the UK Russia regime, apart from the legal form
+  or one extra word.
+- Two officers (97 and 89) against persons under the UK Syria regime, both
+  names in a different word order. The first officer is a secretary with no
+  birth date, and the second target has no birth date or country, so
+  neither can be ruled out on this data.
 
-[company] fell from 70.0 to just under, because the extra UK
+One company fell from 70.0 to just under, because the extra UK
 names shift word weights. The threshold stays at 70.
 
 ## Resigned officers
@@ -442,7 +443,7 @@ Effect at 12 months: 844 more person officer IDs and 15 more corporate
 officer IDs are screened (10,700 and 290; 859 people had no current
 appointment anywhere in the slice). 58 more pairs are scored, but none
 reaches the threshold: the best newly screened officer scores 56
-([officer] against AHMAD ISMAIL). Alerts stay at 30. The
+(a five-word name sharing two words with a two-word target). Alerts stay at 30. The
 gap is closed without adding review work on this data.
 
 match_alert has a resigned_only flag for alerts whose officers hold no

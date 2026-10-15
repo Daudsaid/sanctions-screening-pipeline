@@ -3,9 +3,9 @@
 match_score holds one row per subject-target pair. An analyst reviews a
 subject, not a pair, so pairs at or above THRESHOLD are grouped:
 
-- One subject, several targets: a company called [company] that
-  scores against six sanctioned exchange houses is one alert listing six
-  targets, not six alerts.
+- One subject, several targets: a company named only with the words of a
+  currency exchange that scores against six sanctioned exchange houses is
+  one alert listing six targets, not six alerts.
 - One person, several officer IDs: Companies House sometimes files the same
   person twice at one company (as director and as secretary, only one of
   them with a birth date). Officers with the same matched name who share a
